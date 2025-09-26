@@ -1,0 +1,26 @@
+{
+    "name": "auth-api",
+    "private": true,
+    "version": "0.1.0",
+    "type": "module",
+    "scripts": {
+        "dev": "next dev -p 3000",
+        "build": "next build",
+        "start": "next start -p 3000",
+        "drizzle:generate": "drizzle-kit generate --config=drizzle.config.mjs",
+        "drizzle:migrate": "drizzle-kit migrate --config=drizzle.config.mjs"
+    },
+    "dependencies": {
+        "@auth/drizzle-adapter": "^1.10.0",
+        "drizzle-orm": "^0.36.0",
+        "next": "^14.2.5",
+        "next-auth": "beta",
+        "postgres": "^3.4.4",
+        "react": "18.2.0",
+        "react-dom": "18.2.0"
+    },
+    "devDependencies": {
+        "dotenv": "^17.2.2",
+        "drizzle-kit": "^0.31.4"
+    }
+}

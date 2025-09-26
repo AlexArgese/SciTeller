@@ -1,0 +1,648 @@
+/* ──────────────────────────────────────────────────────────────
+   SciTeller — Control Panel (sticky + glass + navbar-like tabs)
+   Restyled to match Navbar/Home/Sidebar look&feel
+   ────────────────────────────────────────────────────────────── */
+
+/* PANEL ─────────────────────────────────────────────────────── */
+.panel{
+  position: sticky;
+  top: calc(var(--nav-h) + 2*var(--sticky-gap, var(--sp-2)));
+  max-height: calc(100vh - var(--nav-h) - (2* var(--sticky-gap, var(--sp-2)) * 2));
+  width: var(--panel-w);
+  margin-right: var(--sp-3);
+  align-self: stretch;
+
+  display: grid;
+  grid-template-rows: auto 1fr;
+
+  border-radius: 20px 0 0 20px;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  backdrop-filter: blur(var(--glass-blur));
+  box-shadow: var(--glass-CP-sd);
+  overflow: hidden;
+}
+
+/* HEADER ────────────────────────────────────────────────────── */
+.header{
+  position: sticky; top: 0; z-index: var(--z-sticky);
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-3) 0;
+  background: color-mix(in oklab, var(--bg-navbar) 86%, transparent);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+  border-bottom: 1px dashed var(--line-0);
+  box-shadow: var(--glass-beigeCP-sd);
+}
+
+.titleBlock{ display: grid; gap: 6px; }
+.panelTitle{
+  font-family: var(--font-serif);
+  font-weight: 800;
+  font-size: 17px;
+  letter-spacing: .01em;
+  color: var(--heading);
+  margin-bottom: var(--sp-3);
+}
+
+.toggle{
+  width: 34px; height: 34px; border-radius: 999px;
+  border: 1px solid var(--line-0);
+  background: color-mix(in oklab, var(--panel) 82%, transparent);
+  box-shadow: var(--shadow-1);
+  transition: box-shadow var(--dur-2) var(--ease-emph), transform var(--dur-2) var(--ease-emph);
+}
+.toggle:hover{ box-shadow: 0 6px 16px rgba(0,0,0,.10); transform: translateY(-1px); }
+
+/* PRIMARY TABS (Modify · Info · Versions · Export) — NAVBAR STYLE */
+.tabs{
+  position: relative;
+  display: flex;
+  flex-direction: row;
+  justify-content: space-around;
+  align-items: center;
+  gap: 22px;
+  padding: 6px 4px 0;
+
+  /* variabili animate come la navbar */
+  --tab-x: 0px;
+  --tab-w: 60px;
+  --tab-r: 0turn;
+  --roller-h: 10px;
+  --marble-d: 16px;
+}
+
+.tab{
+  position: relative;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: var(--text-2);
+  font-weight: 700;
+  letter-spacing: .01em;
+  padding: 10px 4px 18px; /* coerente con navbar link */
+  cursor: pointer;
+  transition: color var(--dur-2) var(--ease-emph);
+}
+.tab:not(.active):hover{ color: rgb(142, 142, 142) }
+.active{ color: white }
+
+/* ROLLER sotto ai tab (indicatorRef → .cpIndicator) */
+.cpIndicator{
+  position: absolute;
+  left: 0;
+  top: calc(100% /2.1);                          /* come navbar */
+  height: 2em;         /* come navbar */
+  width: calc(100% / 4);                          /* nascosta finché non misuriamo */
+  border-radius: 9999px;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transform: translate3d(0, 0, 0);
+  z-index: 0;
+  transition: none;
+
+  background: var(--glass-blue-bg);
+  box-shadow: var(--glass-blue-sd);
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  backdrop-filter: blur(var(--glass-blur));
+}
+
+/* visibilità quando pronto (come .underlineReady) */
+.cpIndicator{ opacity: 1; }
+
+/* SECONDARY TABS (Story · Sections · Paragraph) — NAVBAR STYLE */
+.scope{
+  position: relative;
+  display: flex;
+  justify-content: space-around;
+  background: color-mix(in oklab, var(--accent) 12%, rgba(255,255,255,.62));
+  align-items: start;
+  gap: 18px;
+  padding: 0 2px var(--sp-3);
+  border-bottom: 1px dashed color-mix(in oklab, var(--line-0) 70%, transparent);
+  width: 100%;
+  box-shadow: var(--glass-scope-sd);
+  /* stesse variabili */
+  --tab-x: 0px;
+  --tab-w: 60px;
+  --tab-r: 0turn;
+  --roller-h: 8px;
+  --marble-d: 14px;
+}
+
+.scopeBtn{
+  position: relative;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: var(--text-2);
+  font-weight: 800;
+  padding: 16px 2px 8px;
+  cursor: pointer;
+  transition: color var(--dur-2) var(--ease-emph);
+}
+.scopeBtn:not(.scopeActive):hover { color: var(--heading); }
+.scopeActive{ color: white }
+
+/* indicatore per i secondary tabs (scopeIndicator / scopeBlob) */
+.scopeIndicator{
+  position: absolute;
+  left: 0;
+  top: calc(100% / 2.1);                          /* come navbar */
+  height: 2em;                 /* come navbar */
+  width: calc(100% / 2.5);                          /* nascosta finché non misuriamo */
+  border-radius: 9999px;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transform: translate3d(0, 0, 0);
+  z-index: 0;
+  transition: none;
+
+  background: var(--glass-blue-bg);
+  box-shadow: var(--glass-blue-sd);
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  backdrop-filter: blur(var(--glass-blur));
+}
+
+
+/* Stato "ready" identico a .underlineReady */
+.indicatorReady{
+  opacity: 1;
+  visibility: visible;
+  transition:
+    transform 520ms var(--ease-emph),
+    width 420ms var(--ease-emph),
+    opacity var(--dur-2) var(--ease-emph);
+}
+.scopeBlob{
+  position: absolute;
+  bottom: calc(var(--roller-h) + 4px);
+  left: 0;
+  width: var(--marble-d); height: var(--marble-d);
+  border-radius: 999px;
+  transform:
+    translateX(calc(var(--tab-x) + (var(--tab-w) / 2) - (var(--marble-d) / 2)))
+    rotate(var(--tab-r));
+  transition: transform 520ms var(--ease-emph);
+  background:
+    radial-gradient(120% 100% at 50% 0%,
+      color-mix(in oklab, var(--accent) 92%, #fff 8%) 0%,
+      var(--accent) 58%,
+      color-mix(in oklab, var(--accent) 70%, #000 30%) 100%);
+  box-shadow:
+    0 10px 22px color-mix(in oklab, var(--accent) 28%, transparent),
+    inset 0 1px 2px rgba(255,255,255,.45);
+  border: 1px solid color-mix(in oklab, var(--accent) 48%, #000 52%);
+}
+
+/* BODY ──────────────────────────────────────────────────────── */
+.scroll{
+  overflow: auto;
+  display: flex; flex-direction: column; gap: var(--sp-3); align-items: center; width: 100%;
+}
+
+/* FORMS & CARDS */
+.section{
+  padding: var(--sp-2) var(--sp-6);
+  width: 100%;
+}
+
+.formGrid{ display: grid; gap: var(--sp-5); }
+.fieldRow{ display: grid; grid-template-columns: 1fr auto;  }
+.valueRight{ color: var(--text-2); font-weight: 700; text-align: justify;}
+.label, .labelBig{ font-weight: 700; color: var(--heading); }
+.labelBig{ font-size: 15px; }
+.range{ accent-color: color-mix(in oklab, var(--accent) 90%, #556 10%); width: 100%;}
+.changePersona{ display: flex; flex-direction: column; }
+
+.select, .input{
+  height: 40px;
+  border-radius: 12px;
+  border: 1px solid var(--line-0);
+  background: color-mix(in oklab, var(--panel) 82%, transparent);
+  padding: 8px 12px;
+  box-shadow: var(--shadow-1);
+  transition: border-color var(--dur-2) var(--ease-emph), box-shadow var(--dur-2) var(--ease-emph), background var(--dur-2) var(--ease-emph);
+}
+.select:hover, .input:hover{ background: color-mix(in oklab, var(--panel) 88%, transparent); }
+.select:focus, .input:focus{
+  outline: 0;
+  border-color: color-mix(in oklab, var(--accent) 60%, var(--line-0));
+  box-shadow: 0 0 0 4px color-mix(in oklab, var(--accent) 18%, transparent);
+}
+
+.ghostBtn{ padding: 5px 12px;
+  border-radius: 12px;
+  background: rgba(255,255,255,.58);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+  cursor: pointer;
+  transition: background var(--dur-2) var(--ease-emph), border-color var(--dur-2) var(--ease-emph);
+  box-shadow: var(--glass-item-sd); height: 34px; }
+.ghostBtn:hover{
+  background: var(--glass-blue-bg);
+  box-shadow: var(--glass-blue-sd);
+  color: #fff;
+}
+.primary{ composes: btn btn-primary from global; height: 42px; }
+
+/* Sections list */
+.sectionsToolbar{ display: flex; gap: 8px; margin: 4px 0; }
+.sectionsList{ display: grid; gap: 6px; }
+.checkboxRow{
+  display: grid; grid-template-columns: 18px 1fr; gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--glass-line);
+  background: rgba(255,255,255,.58);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+  box-shadow: var(--glass-sd);
+  transition: background var(--dur-2) var(--ease-emph), border-color var(--dur-2) var(--ease-emph);
+}
+.cbOn{
+  border-color: color-mix(in oklab, var(--accent) 34%, var(--line-0));
+  background: color-mix(in oklab, var(--accent) 12%, rgba(255,255,255,.62));
+}
+
+/* Paragraph view */
+.row{ display: flex; gap: 10px; }
+.selectedParaBox{
+  border: 1px solid var(--line-0);
+  border-radius: 12px;
+  background: #fff;
+  padding: 10px;
+  box-shadow: 0 1px 2px rgba(0,0,0,.06);
+}
+.selectedMeta{ color: var(--text-2); margin-bottom: 6px; }
+.selectedText{ white-space: pre-wrap; }
+.opsRow{ display: flex; gap: 10px; flex-wrap: wrap; }
+.switch, .radio{
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 6px 8px; border-radius: 12px;
+  background: color-mix(in oklab, var(--panel) 82%, transparent);
+  border: 1px solid var(--line-0);
+  box-shadow: var(--shadow-1);
+}
+
+/* key–value sopra */
+.kv{
+  display: grid;
+  grid-template-columns: 160px 1fr;
+  gap: 8px;
+  align-items: baseline;
+  padding: 6px 0;
+  border-bottom: 1px dashed color-mix(in oklab, var(--line-0) 60%, transparent);
+}
+.kv + .kv{ margin-top: 4px; }
+.kv > div:first-child{
+  color: var(--text-2);
+  font-weight: 600;
+  letter-spacing: .01em;
+}
+.kvVal{
+  font-weight: 700;
+  color: var(--heading);
+}
+
+/* titolo sezione + separatore */
+.h4{
+  font-weight: 800;
+  color: var(--heading);
+  margin: 5px 0 6px;
+  font-family: var(--font-serif);
+}
+.hr{
+  height: 1px;
+  background: color-mix(in oklab, var(--line-0) 65%, transparent);
+  margin: 8px 0;
+  border-radius: 999px;
+}
+
+/* lista sezioni */
+.infoList{
+  display: grid;
+  gap: 6px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+.infoRow{
+  display: flex;
+  flex-direction: column;
+  align-items: start;
+  gap: 10px;
+  padding: 8px 10px;
+  border-bottom: 1px dashed color-mix(in oklab, var(--line-0) 60%, transparent);
+  background: transparent;
+  transition: background var(--dur-2) var(--ease-emph), border-color var(--dur-2) var(--ease-emph);
+}
+.infoRow:hover{
+  background: color-mix(in oklab, var(--panel) 92%, transparent);
+  border-color: var(--line-0);
+}
+
+/* sinistra: titolo + desc */
+.secLeft{ display: grid; gap: 4px; }
+.secTitle{ font-weight: 700; color: var(--heading); }
+.secDesc{ color: var(--text-2); line-height: 1.35; font-size: var(--fs-small); }
+
+/* destra: valori compatti */
+.secRight{ display: flex; gap: 30px; justify-items: start; }
+.kvs{
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 8px;
+  align-items: baseline;
+  color: var(--text-2);
+}
+.kvs > span{
+  font-size: var(--fs-small);
+  text-transform: lowercase;
+  letter-spacing: .02em;
+}
+.kvs > b{
+  font-weight: 700;
+  color: var(--heading);
+}
+
+/* responsive */
+@media (max-width: 860px){
+  .kv{ grid-template-columns: 120px 1fr; }
+}
+@media (max-width: 640px){
+  .kv{ grid-template-columns: 1fr; gap: 2px; }
+  .infoRow{ grid-template-columns: 1fr; gap: 6px; }
+  .secRight{ justify-items: start; grid-auto-flow: column; column-gap: 12px; }
+}
+
+/* ========== Versions — GitKraken-like ========== */
+
+/* wrapper */
+.timeline{
+  position: relative;
+  display: grid;
+  gap: 16px;
+  padding-left: 26px;            /* spazio per rail e nodi */
+  margin: 6px 0;
+}
+
+/* rail verticale principale */
+.timeline::before{
+  content: "";
+  position: absolute;
+  left: 12px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: color-mix(in oklab, var(--line-0) 65%, transparent);
+  border-radius: 999px;
+}
+
+/* item di timeline */
+.tlItem{
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+/* nodo (cerchio) + connettore al rail */
+.tlNode{
+  position: absolute;
+  left: -2px;                    /* centrato sul rail (12px) */
+  top: 12px;
+  width: 12px; height: 12px;
+  background: var(--accent);
+  border-radius: 999px;
+  box-shadow:
+    0 0 0 3px color-mix(in oklab, var(--accent) 20%, transparent),
+    0 2px 6px rgba(0,0,0,.08);
+  border: 1px solid color-mix(in oklab, var(--accent) 35%, #000 65%);
+}
+
+/* card versione — minimal */
+.tlCard{
+  border: 1px solid var(--line-0);
+  border-radius: 14px;
+  background: #fff;
+  padding: 12px 12px 10px;
+  box-shadow: 0 1px 2px rgba(0,0,0,.06);
+  transition: border-color var(--dur-2) var(--ease-emph),
+              box-shadow var(--dur-2) var(--ease-emph),
+              transform var(--dur-2) var(--ease-emph);
+  cursor: pointer;               /* card cliccabile -> open */
+}
+.tlCard:hover{
+  border-color: color-mix(in oklab, var(--accent) 40%, var(--line-0));
+  box-shadow: 0 6px 16px rgba(0,0,0,.08);
+  transform: translateY(-1px);
+}
+
+/* header minimale: titolo · pubblico + ★ preferita a destra */
+.vRow{
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: baseline;
+  gap: 10px;
+}
+.vTitle{
+  display: inline-flex;
+  gap: 8px; align-items: center;
+  font-weight: 800;
+  color: var(--heading);
+}
+.vPublic{
+  display: inline-flex;
+  gap: 6px; align-items: center;
+  color: var(--text-2);
+  font-size: 12px;
+  background: color-mix(in oklab, var(--accent) 12%, #fff);
+  border: 1px dashed color-mix(in oklab, var(--accent) 26%, transparent);
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+/* note */
+.vNotes{
+  margin-top: 6px;
+  white-space: pre-wrap;
+  color: var(--text-1);
+  line-height: 1.35;
+}
+
+/* toggle preferita */
+.favToggle{
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: color-mix(in oklab, var(--text-2) 80%, transparent);
+  font-size: 18px;
+  cursor: pointer;
+  transition: transform var(--dur-2) var(--ease-emph), color var(--dur-2) var(--ease-emph);
+}
+.favToggle:hover{ transform: scale(1.08); }
+.favOn{ color: var(--accent); text-shadow: 0 0 12px color-mix(in oklab, var(--accent) 55%, transparent); }
+
+/* meta (data, autore) opzionale: lo teniamo piccolo e tenue */
+.vMeta{
+  color: var(--text-2);
+  font-size: 11px;
+  margin-top: 2px;
+}
+
+/* nasconde i vecchi pulsanti azione del tuo layout */
+.tlActions{ display: none !important; }
+
+/* branch opzionale: aggiungi .isBranch all’item per spostarlo a destra e disegnare il ramo */
+.tlItem.isBranch{
+  margin-left: 32px;                   /* offset branch  */
+}
+.tlItem.isBranch::before{
+  content:"";
+  position:absolute;
+  left:-20px; top:18px;
+  width:20px; height:12px;
+  border-left:2px solid color-mix(in oklab, var(--line-0) 65%, transparent);
+  border-bottom:2px solid color-mix(in oklab, var(--line-0) 65%, transparent);
+  border-radius:0 0 0 8px;
+}
+/* sposta i branch su corsie: lane 0 = trunk; ogni lane aggiunge offset */
+.tlItem{ --lane: 0; }
+.tlItem { margin-left: calc(26px + (var(--lane) * 28px)); } /* 26 per rail + offset per lane */
+
+.tlItem.isBranch::before{
+  content:"";
+  position:absolute;
+  left: calc(-20px - (var(--lane) * 28px));
+  top:18px;
+  width: calc(20px + (var(--lane) * 28px));
+  height:12px;
+  border-left:2px solid color-mix(in oklab, var(--line-0) 65%, transparent);
+  border-bottom:2px solid color-mix(in oklab, var(--line-0) 65%, transparent);
+  border-radius:0 0 0 8px;
+}
+
+/* stato selezionato (se vuoi evidenziare la versione aperta) */
+.tlCard.isOpen{
+  border-color: color-mix(in oklab, var(--accent) 60%, var(--line-0));
+  box-shadow: 0 6px 22px color-mix(in oklab, var(--accent) 18%, transparent);
+}
+
+/* ── Versions: corsie/rami ───────────────────────────── */
+.timeline{ display: grid; gap: 14px; position: relative; padding-left: 26px; }
+.timeline::before{
+  content:"";
+  position:absolute; left: 10px; top: 0; bottom: 0;
+  width: 2px;
+  background: color-mix(in oklab, var(--line-0) 55%, transparent);
+  border-radius: 2px;
+}
+
+.tlItem{ --lane: 0; position: relative; display: grid; grid-template-columns: 1fr; }
+.tlItem { margin-left: calc((var(--lane) * 28px)); }
+
+.tlItem.isBranch::before{
+  content:"";
+  position:absolute;
+  left: calc(-16px - (var(--lane) * 28px));
+  top: 18px;
+  width: calc(16px + (var(--lane) * 28px));
+  height: 12px;
+  border-left: 2px solid color-mix(in oklab, var(--line-0) 65%, transparent);
+  border-bottom: 2px solid color-mix(in oklab, var(--line-0) 65%, transparent);
+  border-radius: 0 0 0 8px;
+}
+
+.tlNode{
+  position: absolute;
+  left: -16px; top: 8px;
+  width: 10px; height: 10px; border-radius: 999px;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 20%, transparent);
+}
+
+.tlCard{
+  border: 1px solid var(--line-0);
+  border-radius: 12px;
+  background: #fff;
+  padding: 10px;
+  box-shadow: 0 1px 2px rgba(0,0,0,.06);
+  cursor: pointer;
+  transition: box-shadow 160ms var(--ease-emph), transform 160ms var(--ease-emph);
+}
+.tlCard:hover{ box-shadow: 0 6px 16px rgba(0,0,0,.08); transform: translateY(-1px); }
+.tlCard.isOpen{ outline: 2px solid color-mix(in oklab, var(--accent) 55%, transparent); }
+
+.vRow{ display: grid; grid-template-columns: 1fr auto; align-items: baseline; gap: 8px; }
+.vTitle{ font-weight: 800; }
+.favToggle{
+  appearance: none;
+  border: 1px solid var(--line-0);
+  background: color-mix(in oklab, var(--panel) 86%, transparent);
+  width: 28px; height: 28px; border-radius: 999px; line-height: 1;
+  display: inline-grid; place-items: center;
+  cursor: pointer;
+}
+.favToggle:hover{ background: color-mix(in oklab, var(--accent) 16%, #fff); }
+.favOn{ color: var(--accent); border-color: color-mix(in oklab, var(--accent) 40%, var(--line-0)); }
+
+.vMeta{ color: var(--text-2); font-size: 12px; margin-top: 4px; }
+.vPublic{
+  margin-top: 6px;
+  display: inline-block; padding: 2px 8px;
+  border-radius: 999px; font-size: 12px;
+  background: color-mix(in oklab, var(--accent) 12%, #fff);
+  border: 1px solid color-mix(in oklab, var(--accent) 26%, transparent);
+}
+.vNotes{ margin-top: 6px; white-space: pre-wrap; }
+
+
+/* responsivo */
+@media (max-width: 680px){
+  .timeline{ padding-left: 22px; }
+  .timeline::before{ left: 10px; }
+  .tlNode{ left: -4px; }
+}
+
+
+/* Notes stage */
+.noteHint{
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 10px; margin-bottom: 8px; color: var(--text-2); font-size: small;
+}
+.noteBtns{ display: flex; gap: 6px; }
+.textarea{
+  width: 100%; min-height: 140px;
+  border-radius: 12px; border: 1px solid var(--line-0); background: #fff;
+  padding: 10px;
+  box-shadow: 0 1px 2px rgba(0,0,0,.06);
+}
+.noteFooter{
+  display: flex; justify-content: space-between; align-items: center;
+  margin-top: 8px;
+}
+.ok{ color: var(--accent); font-weight: 800; }
+.warn{ color: var(--danger); font-weight: 800; }
+
+/* Misc */
+.actionsSticky{
+  display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: var(--sp-5);
+}
+.noteInfo{ color: var(--text-2); }
+.muted{ color: var(--text-2); }
+.ticks3{
+  display:flex; justify-content:space-between; font-size:12px; color:var(--text-2);
+  margin-top:6px;
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce){
+  .cpIndicator, .scopeIndicator, .scopeBlob{ transition: none; }
+}

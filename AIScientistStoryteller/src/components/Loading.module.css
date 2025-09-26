@@ -1,0 +1,80 @@
+/* Full-page wrapper (centrato, identico approccio alle altre pagine) */
+.page{
+    min-height: calc(100vh - var(--nav-h, 0px));
+    display: grid;
+    place-items: start center;
+    padding: 24px 16px;
+  }
+  
+  /* Card “glass” centrale come le altre pagine */
+  .panel{
+    width: min(860px, 96vw);
+    margin: calc(100vh / 4) auto 0 auto ;
+    padding: 16px 18px 22px;
+    border-radius: 16px;
+    -webkit-backdrop-filter: blur(1px);
+    backdrop-filter: blur(1px);
+    background: var(--glass-bg);
+    box-shadow: var(--glass-sd);
+    text-align: center;
+  }
+  
+  /* Header */
+  .hero{ margin-bottom: 10px; }
+  .h1{
+    margin: 6px 0 4px;
+    font-family: var(--font-serif, ui-serif, Georgia, serif);
+    font-weight: 800;
+    color: var(--heading, #111);
+  }
+  .heroP{ margin: 0; color: rgba(0,0,0,.72); }
+  
+  /* Body */
+  .body{ margin-top: 6px; }
+  .center{ display: grid; place-items: center; padding: 8px 0 10px; }
+  .loaderWrap{ display: grid; place-items: center; height: 70px; }
+  
+  /* Spinner */
+  .spinner{
+    width: 42px; height: 42px; border-radius: 50%;
+    border: 3px solid rgba(0,0,0,.12);
+    border-top-color: rgba(0,0,0,.72);
+    animation: loading-spin 1s linear infinite;
+  }
+  
+  /* Glass utility (come nelle altre pagine) */
+  .glass{
+    background: rgba(255,255,255,.62);
+    -webkit-backdrop-filter: blur(6px);
+    backdrop-filter: blur(6px);
+    border: 1px solid rgba(0,0,0,.06);
+    box-shadow: 0 4px 14px rgba(0,0,0,.06);
+  }
+  
+  /* Ticker messaggi */
+  .ticker{
+    margin-top: 6px;
+    padding: 10px 12px;
+    border-radius: 12px;
+    min-height: 44px;
+    display: grid;
+    place-items: center;
+    background: var(--paper-3);
+  }
+  .tick{ font-weight: 700; color: var(--heading, #111); }
+  
+  .caption{
+    margin-top: 8px;
+    color: rgba(0,0,0,.6);
+    text-align: center;
+  }
+  
+  /* Keyframes */
+  @keyframes loading-spin { to { transform: rotate(360deg); } }
+  
+  /* Responsive */
+  @media (max-width: 520px){
+    .panel{ padding: 14px 14px 18px; border-radius: 14px; }
+    .spinner{ width: 36px; height: 36px; }
+  }
+  

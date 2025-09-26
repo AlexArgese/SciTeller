@@ -1,0 +1,36 @@
+/* SciTeller — Footer */
+
+.footer {
+  width: var(--container-w);
+  margin: 0 auto;
+  padding: var(--sp-7) 5%;
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: var(--sp-6);
+  color: var(--text-2);
+  border-top: 1px dashed var(--line-0);
+}
+
+.logo {
+  font-family: var(--font-serif);
+  font-weight: 700;
+  letter-spacing: .02em;
+  color: var(--heading);
+}
+
+.copy {
+  font-size: var(--fs-small);
+}
+
+.gh {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px; height: 36px;
+  border-radius: 999px;
+  border: 1px solid var(--line-0);
+  background: color-mix(in oklab, var(--panel) 70%, transparent);
+  box-shadow: var(--shadow-1);
+}
+.gh:hover { transform: translateY(-1px); box-shadow: var(--shadow-2); }

@@ -1,0 +1,27 @@
+# Node
+node_modules/
+*.log
+
+# Python
+backend/.venv/
+__pycache__/
+*.pyc
+
+# Next.js
+auth-api/.next/
+auth-api/node_modules/
+
+# React (Vite)
+AIScientistStoryteller/node_modules/
+dist/
+
+# Hugging Face / cache
+hf/
+transformers/
+*.cache/
+*.pt
+
+# Env files
+.env
+*.env
+backend/Document_Parsing/token.txt

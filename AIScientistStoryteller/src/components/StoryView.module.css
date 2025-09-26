@@ -1,0 +1,76 @@
+/* SciTeller — StoryView (tipografia e sezioni) */
+:root {
+  --navbar-h: 20vh; /* metti l'altezza reale della tua navbar */
+  --section-flash-bg: rgba(118, 118, 254, 0.252);
+}
+
+.title {
+  font-family: var(--font-serif);
+  font-size: clamp(24px, 2.4vw, 32px);
+  line-height: var(--lh-tight);
+  margin: 0 0 14px;
+  color: var(--heading);
+  text-align: center;
+}
+.sectionTitle{
+  text-align: center;
+  margin-top: 2em;
+  margin-bottom: 1em;
+}
+
+.section {
+  position: relative;
+  margin-bottom: 14px;
+  scroll-margin-top: var(--navbar-h, 80px);
+}
+
+/* === EFFETTO FLASH GLOBALE (perché la classe viene aggiunta da Stories.jsx) === */
+:global(.sectionFlash) {
+  position: relative;
+  isolation: isolate; /* stacking context dedicato */
+}
+
+:global(.sectionFlash)::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 12px;
+  background: var(--section-flash-bg);
+  pointer-events: none;
+  z-index: 1;                   /* sopra il background della section */
+  animation: section-flash 1000ms ease-out; /* 1000ms = timer JS */
+}
+
+/* keyframes invariati (puoi tenerli locali) */
+@keyframes section-flash {
+  0%   { opacity: 0; }
+  15%  { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* Rispetta prefers-reduced-motion */
+@media (prefers-reduced-motion: reduce) {
+  :global(.sectionFlash)::before {
+    animation-duration: 1ms;
+  }
+}
+
+.p { margin: 0 0 12px; text-align: justify;  }
+
+.pSelectable {
+  position: relative;
+  border-radius: 8px;
+  padding: 2px 4px;
+  transition: background var(--dur-2) var(--ease-emph), box-shadow var(--dur-2) var(--ease-emph);
+}
+.pSelectable:not(.pActive):hover {
+  background: color-mix(in oklab, var(--accent) 8%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--accent) 16%, transparent);
+}
+.pActive {
+  background: color-mix(in oklab, var(--accent) 12%, #fff);
+  box-shadow:
+    0 4px 18px color-mix(in oklab, var(--accent) 18%, transparent);
+}
+
+.pIndex { display: inline-block; font-size: var(--fs-small); font-weight: 700; color: var(--text-2); margin-right: .5em; }

@@ -1,0 +1,108 @@
+/* SciTeller — Sidebar sinistra (STICKY + glass) */
+
+.wrap{
+  position: sticky;
+  top: calc(var(--nav-h) + 2*var(--sticky-gap, var(--sp-2)));
+  max-height: calc(100vh - var(--nav-h) - (2* var(--sticky-gap, var(--sp-2)) * 2));
+  width: var(--sidebar-w);
+
+  /* fondamentale: il grid item deve “stirarsi” sulla riga */
+  align-self: stretch;
+  
+}
+
+.panel{
+  width: var(--sidebar-w);
+  height: 100%;
+  display: grid;
+  grid-template-rows: 1fr auto;
+  border-radius: 0 20px 20px 0;
+  background: var(--bg-navbar);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(3px);
+  box-shadow: var(--glass-beigeSB-sd);
+  position: relative;
+  overflow: visible; /* serve per far “uscire” l’after a metà */
+}
+
+
+
+
+
+.scroll {
+  overflow: auto;
+  padding: var(--sp-3);
+  display: grid;
+  gap: 8px;
+}
+.loading { padding: 8px 12px; color: #666; }
+.empty   { padding: 8px 12px; color: #888; font-style: italic; }
+
+.item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 12px;
+  background: rgba(255,255,255,.58);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+  cursor: pointer;
+  transition: background var(--dur-2) var(--ease-emph), border-color var(--dur-2) var(--ease-emph);
+  box-shadow: var(--glass-item-sd)
+}
+.item:hover {  background: color-mix(in oklab, var(--accent) 49%, rgba(255,255,255,.62)); }
+
+.active {
+  background: color-mix(in oklab, var(--accent) 12%, rgba(255,255,255,.62));
+}
+
+.itemTitle {
+  font-weight: 700;
+  color: var(--heading);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: small;
+}
+
+.deleteBtn {
+  width: 28px; height: 28px;
+  display: grid; place-items: center;
+  color: var(--text-2);
+}
+.deleteBtn:hover {
+  color: var(--danger);
+  border-color: color-mix(in oklab, var(--danger) 40%, var(--line-0));
+}
+
+.footer {
+  padding: var(--sp-3);
+  border-top: 1px dashed var(--line-0);
+  background: rgba(255,255,255,.36);
+  border-radius: 0 0 20px 0;
+  box-shadow: var(--glass-beigeSB-footer-sd);
+}
+
+.newBtn {
+  composes: btn btn-primary from global;
+  width: 100%;
+  height: 46px;
+}
+
+/* Evidenzia l'item quando si naviga da tastiera */
+.item:focus-visible {
+  outline: 2px solid rgba(99, 102, 241, 0.6); /* violet-500 */
+  outline-offset: 2px;
+  border-radius: 10px;
+}
+
+/* Titoli in una riga con ellissi */
+.itemTitle {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+

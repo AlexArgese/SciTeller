@@ -1,0 +1,86 @@
+/* SciTeller — Stories page (3 colonne + pannelli sticky coerenti) */
+
+
+/* toggle pannello destro */
+.withPanel { grid-template-columns: var(--sidebar-w) 1fr var(--panel-w); }
+.noPanel   { grid-template-columns: var(--sidebar-w) 1fr 0px; }
+
+.centerCol {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  align-self: start;
+}
+.centerInner { display: grid; gap: var(--sp-3); }
+
+.page {
+  display: grid;
+  grid-template-columns: var(--sidebar-w) 1fr var(--panel-w);
+  gap: var(--sp-3);
+  width: var(--container-w);
+
+  /* ⬇ niente margin-top = niente “saltino” */
+  margin: calc(var(--nav-h) + 20px) 0 var(--sp-6);
+  padding-bottom: var(--sp-2);
+
+  /* un solo punto-verità per l’offset sticky */
+  --sticky-gap: var(--sp-2);
+
+  min-height: calc(100vh - var(--nav-h) - var(--footer-h));
+  align-items:flex-start;
+}
+
+/* tabs host allineato allo stesso offset dei pannelli */
+.tabsHost {
+  position: sticky;
+  top: calc(var(--nav-h) + var(--sticky-gap));
+  z-index: var(--z-sticky);
+}
+
+/* card centrale coerente con home/navbar */
+.card {
+  position: relative;
+  padding: 22px 28px;
+  margin-top: calc(var(--nav-h) + 2*var(--sticky-gap, var(--sp-2)));
+  margin: 0 10%;
+  
+}
+
+.card :global(canvas),
+.card :global(iframe) {
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(0,0,0,.06);
+}
+
+
+.reopenHandle{
+  position: fixed; right: calc(var(--panel-w) - 5px); top: calc(var(--nav-h) + var(--sp-10));
+  z-index: 0;
+  background: var(--glass-blue-bg);
+  box-shadow: var(--glass-blue-toggle-sd);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+  color: #fff;
+  padding: 1em;
+  border-radius: 99px 0 0 99px;
+  font-weight: 700;
+
+  text-align: center;
+}
+.reopenHandle:hover{
+  color: rgb(149, 149, 149);
+}
+
+.recolseHandle{
+  position: fixed; right: -5px; top: calc(var(--nav-h) + var(--sp-10));
+  z-index: 99999;
+  background: var(--glass-blue-bg);
+  box-shadow: var(--glass-blue-toggle-sd);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+  color: #fff;
+  padding: 1em;
+  border-radius: 99px 0 0 99px;
+  font-weight: 700;
+
+  text-align: center;
+}

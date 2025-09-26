@@ -1,0 +1,146 @@
+/* ==========================================================================
+   SciTeller — Design Tokens (light/dark)
+   --------------------------------------------------------------------------
+   Palette "Carta/Inchiostro/Accento", tipografia serif+sans, radius, ombre,
+   blur glass, spaziatura, motion e z-index. 
+   ========================================================================== */
+
+/* (facoltativo) font: serif “old writing” + sans moderna */
+@import url("https://fonts.googleapis.com/css2?family=Literata:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap");
+
+:root {
+  /* ===== Colors (LIGHT) ===== */
+  --paper-0: #f8f7f4;   /* sfondo “carta” */
+  --paper-1: #f4f1eb;
+  --paper-2: #ede9e2;
+  --ink-0: #0f0f14;     /* testo principale */
+  --ink-1: #2a2a33;     /* titoli secondari */
+  --ink-2: #5a5a66;     /* testo secondario */
+  --line-0: #b2ada4;    /* hairline su carta */
+  --line-1: #c9c3b8;
+
+  /* Accenti “tech” */
+  --accent: #1E3A8A;
+  --accent-2: #5fd0c0;  /* alternativa/ok */
+  --warn: #ffb020;
+  --danger: #f05252;
+  --success: #16a34a;
+
+  /* ===== Typography ===== */
+  --font-serif: "Literata", ui-serif, Georgia, Cambria, "Times New Roman", serif;
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+
+  --fs-hero: clamp(36px, 5vw, 64px);
+  --fs-h1: clamp(28px, 3.6vw, 44px);
+  --fs-h2: clamp(22px, 2.6vw, 32px);
+  --fs-h3: clamp(18px, 2vw, 24px);
+  --fs-body: 16px;
+  --fs-small: 14px;
+  --lh-tight: 1.15;
+  --lh-snug: 1.25;
+  --lh-normal: 1.55;
+
+  /* ===== Radius ===== */
+  --r-xs: 8px;
+  --r-sm: 12px;
+  --r-md: 16px;
+  --r-lg: 20px;
+  --r-2xl: 28px;
+
+  /* ===== Shadows (ink-like soft) ===== */
+  --shadow-1: 0 1px 2px rgba(15, 15, 20, .08), 0 1px 8px rgba(15, 15, 20, .05);
+  --shadow-2: 0 8px 22px rgba(15, 15, 20, .2), 0 2px 8px rgba(15, 15, 20, .2);
+  --shadow-3: 0 20px 50px rgba(15, 15, 20, .18);
+  --shadow-4: 0 8px 22px rgba(15, 15, 20, .1), 0 2px 8px rgba(15, 15, 20, .1);
+
+  /* ===== Glass ===== */
+  --glass-bg: rgba(255, 255, 255, 0.257);
+  --glass-blue-bg: radial-gradient(120% 100% at 50% 0%, color-mix(in oklab, var(--accent) 52%, #fff 8%) 20%, var(--accent) 48%, color-mix(in oklab, var(--accent) 68%, #ffffff 8%) 70%);
+  --glass-brd: rgba(255, 255, 255, 0.68);
+  --glass-line: rgba(0, 0, 0, 0.334);
+  --glass-blur: 6px;
+  --glass-sd: 0 4px 2px var(--glass-brd) inset, 0 -4px 2px var(--glass-brd) inset, 4px 0 2px var(--glass-line) inset, -4px 0 2px var(--glass-line) inset, var(--shadow-2);
+  --glass-CP-sd: 0 4px 2px var(--glass-brd) inset, 0 -4px 2px var(--glass-brd) inset, 4px 0 2px var(--glass-line) inset,  var(--shadow-2);
+  --glass-scope-sd: 3px 0 8px var(--glass-line) inset, var(--shadow-4);
+  --glass-ball-sd: 0 2px 1px var(--glass-brd) inset, 0 -2px 1px var(--glass-brd) inset, 2px 0 1px var(--glass-line) inset, -2px 0 1px var(--glass-line) inset, var(--shadow-2);
+  --glass-blue-sd: 4px 0 2px var(--glass-line) inset, -4px 0 2px var(--glass-line) inset, var(--shadow-2);
+  --glass-blue-toggle-sd: 4px 0 2px var(--glass-line) inset, -7px 0 3px var(--glass-line) inset, var(--shadow-2);
+  --glass-beigeCP-sd: 0 4px 2px var(--glass-brd) inset,  4px 0 6px var(--glass-line) inset, var(--shadow-4);
+  --glass-beigeSB-sd: 0 4px 2px var(--glass-brd) inset,   -4px 0 2px var(--glass-line) inset, var(--shadow-2);
+  --glass-beigeSB-footer-sd: 0 -2px 1px var(--glass-brd) inset, -3px 0 2px var(--glass-line) inset, var(--shadow-2);
+  --glass-item-sd: 0 3px 2px var(--glass-brd) inset, 0 -3px 2px var(--glass-brd) inset, 3px 0 2px var(--glass-line) inset, -3px 0 2px var(--glass-line) inset, var(--shadow-2);
+  --glass-nav-sd: 0 4px 2px var(--glass-brd) inset,   var(--shadow-2);
+
+
+  /* ===== Spacing scale ===== */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-7: 32px;
+  --sp-8: 40px;
+  --sp-9: 56px;
+  --sp-10: 72px;
+
+  /* ===== Motion ===== */
+  --ease-emph: cubic-bezier(.22,.61,.36,1);
+  --ease-soft: cubic-bezier(.22,.75,.16,1);
+  --dur-1: 120ms;
+  --dur-2: 200ms;
+  --dur-3: 360ms;
+
+  /* ===== Layout helpers ===== */
+  --container-w: 100vw;
+  --nav-h: 64px;     /* aggiornato dinamicamente da Navbar.jsx */
+  --footer-h: 88px;  /* aggiornato dinamicamente da Footer.jsx */
+
+  /* Z-index scale */
+  --z-base: 0;
+  --z-sticky: 10;
+  --z-popover: 20;
+  --z-modal: 30;
+  --z-toast: 40;
+
+  --line-paper-bg: repeating-linear-gradient(180deg, rgba(0,0,0,.05) 0 1px, transparent 1px 28px)
+}
+
+/* ========================= DARK THEME ========================= */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper-0: #0f1115;
+    --paper-1: #11141a;
+    --paper-2: #171b22;
+    --ink-0: #f4f5f7;
+    --ink-1: #dfe3ea;
+    --ink-2: #aab2bf;
+    --line-0: #2a303a;
+    --line-1: #202530;
+
+    --accent: #7b8cff;
+    --accent-2: #69dfd0;
+
+    --glass-bg: rgba(17, 20, 26, 0.353);
+    --glass-brd: rgba(255, 255, 255, 0.06);
+    --glass-line: rgba(0, 0, 0, 0.35);
+    --glass-blur: 22px;
+    --glass-sd: 0 1px 0 rgba(255,255,255,.04) inset,  0 0 0 1px rgba(0,0,0,.35) inset, 0 18px 40px rgba(0,0,0,.35);
+    --glass-beige-sd: 0 1px 0 rgba(255, 0, 0, 0.04) inset,  0 0 0 1px rgba(0,0,0,.35) inset, 0 18px 40px rgba(0,0,0,.35);
+
+    --line-paper-bg: repeating-linear-gradient(180deg, rgba(255,255,255,.06) 0 1px, transparent 1px 28px)
+  }
+}
+
+/* ========================= THEME ALIASES ========================= */
+:root {
+  --bg: var(--paper-0);
+  --bg-navbar: var(--paper-2);
+  --panel: var(--paper-1);
+  --panel-2: var(--paper-2);
+  --text: var(--ink-0);
+  --text-2: var(--ink-2);
+  --heading: var(--ink-1);
+  --border: var(--line-0);
+}

@@ -1,0 +1,82 @@
+.page{
+  max-width:1060px; margin:0 auto; padding:clamp(18px,3vw,28px);
+  background: var(--glass-bg);
+  border:1px solid var(--glass-border);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-card);
+  backdrop-filter: blur(10px) saturate(120%); -webkit-backdrop-filter: blur(10px) saturate(120%);
+  position:relative;
+}
+.page::before{
+  content:""; position:absolute; inset:0; border-radius:inherit; pointer-events:none;
+  background: radial-gradient(300px 220px at var(--lx) var(--ly), rgba(255,255,255,.22), transparent 76%);
+}
+
+/* HERO */
+.hero{ text-align:center; margin:12px 0 28px }
+.title{
+  font-size: clamp(40px, 5.2vw, 64px);
+  line-height: 1.05; margin: 8px 0 10px; font-weight: 800;
+}
+.lead{
+  max-width:720px; margin:0 auto; font-size:16px; line-height:1.5; opacity:.95;
+}
+
+/* RIGHE CONTENUTO ALTERNATE */
+.row{
+  display:grid; grid-template-columns: 1.1fr .9fr; gap:24px; align-items:center; margin:44px 0;
+}
+.flip{ grid-template-columns: .9fr 1.1fr }
+
+.colText p{ margin:10px 0 0; line-height:1.55 }
+.h2{ font-size:28px; margin:0 0 8px; font-weight:800 }
+
+/* placeholder immagine */
+.colMedia{ display:grid }
+.imgBox{
+  min-height:180px; border-radius:10px;
+  background:#ccb39a; color:rgba(0,0,0,.8);
+  display:grid; place-items:center;
+  font-weight:600; letter-spacing:.2px;
+  box-shadow: 0 6px 18px rgba(0,0,0,.08), inset 0 1px 0 rgba(255,255,255,.4);
+}
+
+/* CREDITS */
+.credits{ margin:54px 0 24px }
+.personBlock{ margin:8px 0 18px }
+.personName{ font-weight:800; font-size:18px }
+.personText{ margin:6px 0 2px; line-height:1.5 }
+.linksLabel{ font-style: italic; font-weight:700; opacity:.85 }
+
+.supervisors{ margin-top:20px }
+.supTitle{ font-weight:700; margin-bottom:8px }
+.supList{ margin:0; padding-left:16px; display:grid; gap:14px }
+.supName{ font-weight:700 }
+
+/* INSTITUTIONS */
+.institutions{ margin:32px 0 0 }
+.instTitle{ margin-bottom:14px; font-weight:600 }
+.instLogos{
+  display:grid; grid-template-columns:1fr 1fr; gap:28px; align-items:center; justify-items:center;
+}
+.logoBox{
+  width:320px; height:110px; display:grid; place-items:center;
+  background: rgba(255,255,255,.55);
+  border:1px solid rgba(255,255,255,.75);
+  border-radius:14px;
+  box-shadow: 0 10px 24px rgba(8,34,64,.10), inset 0 8px 14px rgba(255,255,255,.35);
+  color:#1b2936; font-weight:700;
+}
+.logoBox img{ max-width:90%; max-height:80%; object-fit:contain }
+
+body[data-route="about"] .page{
+  margin-top: calc(var(--nav-h,72px) + 8px);
+}
+
+/* responsive */
+@media (max-width:880px){
+  .page{ padding:18px 16px 36px }
+  .row, .flip{ grid-template-columns:1fr }
+  .imgBox{ min-height:160px }
+  .instLogos{ grid-template-columns:1fr }
+}
