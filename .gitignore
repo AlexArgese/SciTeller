@@ -15,11 +15,22 @@ auth-api/node_modules/
 AIScientistStoryteller/node_modules/
 dist/
 
-# Hugging Face / cache
+# Hugging Face / modelli / cache
 hf/
+hf-cache/
+.huggingface/
+transformers_cache/
+datasets/
+models/
+checkpoints/
+outputs/
 transformers/
 *.cache/
 *.pt
+*.bin
+*.safetensors
+*.onnx
+
 
 # Env files
 .env
