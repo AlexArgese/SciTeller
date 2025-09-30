@@ -1,0 +1,21 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+.env
+.venv
+venv/
+dist/
+build/
+.git
+.gitignore
+
+# aggiunte per alleggerire
+Document_Parsing/
+package-lock.json
+*.pdf
+*.png
+*.jpg
+*.jpeg
+*.md

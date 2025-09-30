@@ -163,7 +163,7 @@ os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 
 BASE_DIR = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE_DIR))
-import story_ops  # locale CPU
+story_ops = None
 
 # ========= FastAPI =========
 app = FastAPI(title="AI Scientist Storyteller API", version="0.5.0")
@@ -422,6 +422,8 @@ def generate_from_text(req: GenerateFromTextRequest):
 
 @app.post("/api/regen")
 def regen_sections(req: RegenRequest):
+    if story_ops is None:
+        raise HTTPException(503, "Inferenza locale disabilitata: usare REMOTE_GPU_URL")
     new_story, _alts = story_ops.regen_sections(
         req.text, req.persona,
         story_json=req.story.model_dump(),
@@ -436,6 +438,8 @@ def regen_sections(req: RegenRequest):
 
 @app.post("/api/para")
 def paraphrase(req: ParaRequest):
+    if story_ops is None:
+        raise HTTPException(503, "Inferenza locale disabilitata: usare REMOTE_GPU_URL")
     outs = story_ops.paraphrase(
         paragraph=req.text,
         persona=req.persona,

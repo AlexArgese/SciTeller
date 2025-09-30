@@ -1,0 +1,50 @@
+# ---- core backend
+fastapi
+uvicorn[standard]
+python-dotenv
+requests
+pydantic
+python-multipart
+
+# ---- pdf/io
+pypdf
+pdfplumber
+pdf2image
+PyMuPDF
+
+# ---- vendor docparsing deps (pure python + ML)
+numpy
+Pillow
+pylatex
+pylatexenc
+pydantic-settings
+defusedxml
+wordninja
+py3langid
+huggingface_hub
+langsmith
+
+# ---- CV / OCR / ONNX / HF
+opencv-python-headless
+onnxruntime
+onnx
+transformers
+optimum[onnxruntime]
+onnxtr
+
+# ---- YOLO layout detector (e dipendenze che spesso servono esplicite)
+doclayout-yolo
+torch
+torchvision
+matplotlib
+seaborn
+albumentations
+albucore
+psutil
+py-cpuinfo
+thop
+simsimd
+stringzilla
+
+# ---- (opzionale) SDK VertexAI usato dal parser, già incluso in google-cloud-aiplatform
+google-cloud-aiplatform
