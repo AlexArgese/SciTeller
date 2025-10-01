@@ -22,7 +22,9 @@
 
 .left { display: flex; align-items: center; gap: var(--sp-3); }
 .right { display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-3); }
-
+.logo {
+  width: 2.5em;
+}
 /* Brand */
 .brand {
   font-family: var(--font-serif);

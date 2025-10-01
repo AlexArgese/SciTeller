@@ -246,6 +246,33 @@ export default function Home() {
     };
   }, []);
 
+  // --- persona → opzioni storyteller (coerenti con infer_from_splits.py) ---
+  function optionsForPersona(persona) {
+    const capTemp = (t) => Math.min(t, 0.7);
+    const base = { top_p: 0.85 }; // clamp lato FE per coerenza
+
+    switch (persona) {
+      case "General Public":
+        return { ...base, preset: "short", k: 3, max_ctx_chars: 1400, temperature: capTemp(0.5) };
+      case "Investor":
+        return { ...base, preset: "short", k: 3, max_ctx_chars: 1600, temperature: capTemp(0.6) };
+      case "Student":
+        return { ...base, preset: "medium", k: 4, max_ctx_chars: 1800, temperature: capTemp(0.5) };
+      case "Journalist":
+        return { ...base, preset: "medium", k: 4, max_ctx_chars: 2000, temperature: capTemp(0.5) };
+      case "Developer":
+        return { ...base, preset: "medium", k: 5, max_ctx_chars: 2400, temperature: capTemp(0.4) };
+      case "Policy Maker":
+        return { ...base, preset: "medium", k: 5, max_ctx_chars: 2200, temperature: capTemp(0.4) };
+      case "Teacher":
+        return { ...base, preset: "long", k: 6, max_ctx_chars: 2600, temperature: capTemp(0.35) };
+      case "Researcher":
+        return { ...base, preset: "long", k: 6, max_ctx_chars: 3000, temperature: capTemp(0.3) };
+      default:
+        return { ...base, preset: "medium", k: 4, max_ctx_chars: 1800, temperature: capTemp(0.5) };
+    }
+  }
+
   // ----------------- click handler: locale o link -> File (via proxy) -----------------
   const handleGenerate = async () => {
     if (isLoading) return;
@@ -266,15 +293,21 @@ export default function Home() {
         setPdfName(pdfFile.name);
       }
 
-      // 2) opzioni AI
+      // 2) opzioni AI (auto in base alla persona)
+      const o = optionsForPersona(persona);
+
+      // Se il tuo backend si aspetta questi nomi, tienili così (coerenti con two_stage_app/infer_from_splits):
       const options = {
-        length: "medium",
+        preset: o.preset,                 // short|medium|long
+        k: o.k,                           // top-k paragrafi per sezione
+        max_ctx_chars: o.max_ctx_chars,   // budget contesto per sezione
+        temperature: o.temperature,       // creatività controllata
+        top_p: o.top_p,                   // clamp 0.85
         limit_sections: 5,
-        temp: 0.0,
-        top_p: 0.9,
         title_style: "didactic",
-        title_max_words: 5,
+        title_max_words: 6,
       };
+
 
       // 3) crea story provvisoria (solo ora)
       const provisional = pdfFile?.name || "Story";

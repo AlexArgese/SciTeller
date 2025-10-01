@@ -20,6 +20,10 @@ body {
   background: var(--bg);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  min-height: 100vh;
+}
+main {
+  flex: 1; /* si espande per occupare lo spazio vuoto */
 }
 h1, h2, h3, .h1, .h2, .h3 {
   font-family: var(--font-serif);

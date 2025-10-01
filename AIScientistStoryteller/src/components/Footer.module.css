@@ -4,8 +4,8 @@
   width: var(--container-w);
   margin: 0 auto;
   padding: var(--sp-7) 5%;
-  display: grid;
-  grid-template-columns: 1fr auto auto;
+  display: flex;
+  flex-direction: column;
   align-items: center;
   gap: var(--sp-6);
   color: var(--text-2);
@@ -13,10 +13,16 @@
 }
 
 .logo {
+  width: 5em;
+}
+
+.brand {
   font-family: var(--font-serif);
   font-weight: 700;
-  letter-spacing: .02em;
+  font-size: 22px;
+  text-decoration: none;
   color: var(--heading);
+  letter-spacing: .02em;
 }
 
 .copy {

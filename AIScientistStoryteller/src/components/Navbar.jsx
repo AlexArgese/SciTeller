@@ -263,6 +263,7 @@ export default function Navbar() {
         <div className={styles.nav}>
   
           <div className={styles.left}>
+            <img className={styles.logo} src="logoNObg2.png" />
             <NavLink to="/" end className={styles.brand} title="Home" aria-label="SciTeller, Home">
               <span className={styles.brandTxt}>SciTeller</span>
             </NavLink>
