@@ -18,9 +18,18 @@ services:
         DP_USERNAME: oauth2
         DP_ACCESS_TOKEN: ${DP_ACCESS_TOKEN}
     environment:
-      REMOTE_GPU_URL: http://host.docker.internal:9000
+      REMOTE_GPU_URL: http://host.docker.internal:8018
       DOCPARSE_BIN: docparse
       API_KEY: ${API_KEY}
+
+      # === HF cache config ===
+      HF_HOME: /hf-cache
+      HUGGINGFACE_HUB_CACHE: /hf-cache/hub
+      TRANSFORMERS_CACHE: /hf-cache/transformers
+      HF_HUB_OFFLINE: "1"      
+      TRANSFORMERS_OFFLINE: "1"
+    volumes:
+      - ./hf-cache:/hf-cache    
     expose:
       - "8000"
     networks: [scinet]

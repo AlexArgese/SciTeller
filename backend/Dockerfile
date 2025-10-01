@@ -8,9 +8,6 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 # Dipendenze di sistema (minime ma necessarie)
-# - build-essential -> per compilazioni leggere (alcune wheels)
-# - poppler-utils   -> per pdf2image (pdftoppm)
-# - libgl1, libglib2.0-0 -> per opencv/cv2
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     poppler-utils \
@@ -18,22 +15,27 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0 \
  && rm -rf /var/lib/apt/lists/*
 
-# 1) Reqs del backend (tenere PRIMA del codice per sfruttare la cache)
+# 1) Reqs del backend
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 2) Vendorizza il pacchetto pure-Python "docparsing"
-#    (contenuto in backend/vendor/docparsing)
+# 2) Prepara la cache Hugging Face
+RUN mkdir -p /hf-cache/hub /hf-cache/transformers
+ENV HF_HOME=/hf-cache
+ENV HUGGINGFACE_HUB_CACHE=/hf-cache/hub
+ENV TRANSFORMERS_CACHE=/hf-cache/transformers
+
+# 3) Vendorizza il pacchetto pure-Python "docparsing"
 COPY vendor /opt/vendor
 ENV PYTHONPATH=/opt/vendor:${PYTHONPATH}
 
-# 3) Crea lo "shim" del comando 'docparse'
+# 4) Crea lo "shim" del comando 'docparse'
 RUN printf '%s\n' '#!/usr/bin/env python3' \
     'from docparsing.jobs.parse import main' \
     'if __name__ == "__main__": main()' \
     > /usr/local/bin/docparse && chmod +x /usr/local/bin/docparse
 
-# 4) Copia il resto del codice dell'app
+# 5) Copia il resto del codice dell'app
 COPY . .
 
 # Docparse di default è sul PATH

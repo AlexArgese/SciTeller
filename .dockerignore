@@ -20,3 +20,5 @@
 **/.env
 **/*.env
 **/*token*.txt
+
+!hf-cache
