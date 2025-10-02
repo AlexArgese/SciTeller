@@ -4,7 +4,7 @@
 import os, tempfile, subprocess, json, sys, pathlib, re
 from typing import Optional, List, Dict, Any
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -166,7 +166,30 @@ sys.path.insert(0, str(BASE_DIR))
 story_ops = None
 
 # ========= FastAPI =========
-app = FastAPI(title="AI Scientist Storyteller API", version="0.5.0")
+TAGS_METADATA = [
+    {"name": "Health", "description": "Liveness and readiness of the service."},
+    {"name": "Explain", "description": "Upload a PDF → parse it → run 2-stage generation on the GPU VM → story JSON."},
+    {"name": "Generate", "description": "Provide text/markdown → run 2-stage generation on the GPU VM → story JSON."},
+    {"name": "Edit", "description": "Local-only utilities to regenerate sections or paraphrase a paragraph."},
+    {"name": "VM Orchestrator", "description": "Regenerate a story from a precomputed outline on the GPU VM."},
+]
+
+app = FastAPI(
+    title="AI Scientist Storyteller API",
+    version="0.5.0",
+    description=(
+        "Mac backend orchestrating PDF parsing and story generation on a remote GPU VM.\n\n"
+        "### Flow\n"
+        "- **/api/explain**: PDF → docparse → markdown → split + story → JSON\n"
+        "- **/api/generate_from_text**: text/markdown → split + story → JSON\n"
+        "- **/api/regen**: regenerate one or more sections (local inference)\n"
+        "- **/api/para**: paraphrase a paragraph (local inference)\n"
+        "- **/api/regen_vm**: regenerate from a precomputed outline on the GPU VM\n\n"
+        "Use `/docs` (Swagger UI) or `/redoc` for interactive documentation."
+    ),
+    openapi_tags=TAGS_METADATA,
+)
+
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 # ========= Schemas =========
@@ -178,12 +201,19 @@ class StoryIn(BaseModel):
     persona: str
     sections: List[StorySectionIn]
 
+class SectionOut(BaseModel):
+    title: Optional[str] = None
+    narrative: str
+
 class ExplainResponse(BaseModel):
     persona: str
-    title: Optional[str] = None          # <- aggiungi
+    title: Optional[str] = None
     docTitle: Optional[str] = None
-    sections: list
+    sections: List[SectionOut]
     meta: Optional[Dict[str, Any]] = None
+
+class ExplainWithOutlineResponse(ExplainResponse):
+    outline: Optional[List[Dict[str, Any]]] = None
 
 class GenerateFromTextRequest(BaseModel):
     text: str
@@ -216,6 +246,9 @@ class RegenRequest(BaseModel):
     temp: float = 0.7
     top_p: float = 0.9
 
+class RegenResponse(BaseModel):
+    sections: List[SectionOut]
+
 class ParaRequest(BaseModel):
     persona: str
     text: str
@@ -223,6 +256,59 @@ class ParaRequest(BaseModel):
     alts: int = 1
     temp: float = 0.7
     top_p: float = 0.9
+
+
+GenerateFromTextRequest.__doc__ = """
+Generate a multi-section story from already-extracted text/markdown.
+"""
+
+generate_from_text_example = {
+    "summary": "Clean markdown, 4 sections, low creativity",
+    "value": {
+        "text": "# Title\\n\\n## Introduction\\nThis paper studies ...",
+        "persona": "Journalist",
+        "length": "medium",
+        "words": 0,
+        "limit_sections": 4,
+        "temp": 0.2,
+        "top_p": 0.9,
+        "title_style": "canonical",
+        "title_max_words": 12,
+        "title": "Paper",
+        "length_preset": "medium",
+        "retriever": "auto",
+        "k": 6
+    }
+}
+
+RegenRequest.__doc__ = """
+Regenerate one or more sections given the current story JSON.
+"""
+
+regen_request_example = {
+    "summary": "Regenerate 2 sections with creativity 0.7",
+    "value": {
+        "text": "clean markdown ...",
+        "persona": "General Public",
+        "story": {
+            "persona": "General Public",
+            "sections": [
+                {"title": "Intro", "narrative": "...."},
+                {"title": "Method", "narrative": "...."}
+            ]
+        },
+        "sections": ["Intro", "Method"],
+        "length": "long",
+        "words": 0,
+        "alts": 1,
+        "temp": 0.7,
+        "top_p": 0.9
+    }
+}
+
+ParaRequest.__doc__ = """
+Targeted paraphrase of a single paragraph tailored to a persona.
+"""
 
 # ========= Helpers =========
 def _headers():
@@ -253,20 +339,31 @@ def _local_story(req: GenerateFromTextRequest):
     )
 
 # ========= Routes =========
-@app.get("/health")
+@app.get(
+    "/health",
+    tags=["Health"],
+    summary="Healthcheck",
+    description="Returns ok=True if the backend is alive."
+)
 def health():
     return {"ok": True}
 
-@app.post("/api/explain", response_model=ExplainResponse)
+@app.post(
+    "/api/explain",
+    tags=["Explain"],
+    summary="Upload PDF → Story",
+    description="Upload a PDF, extract markdown via docparse, then call the GPU VM (2 stages: splitter + storyteller).",
+    response_model=ExplainResponse,
+)
 async def explain_endpoint(
-    persona: str = Form(...),
-    file: UploadFile = File(...),
-    length: str = Form("medium"),
-    limit_sections: int = Form(5),
-    temp: float = Form(0.0),
-    top_p: float = Form(0.9),
-    title_style: str = Form("canonical"),
-    title_max_words: int = Form(0),
+    persona: str = Form(..., description="Target persona/audience (e.g., Journalist, General Public, Student, Expert)."),
+    file: UploadFile = File(..., description="Paper PDF file."),
+    length: str = Form("medium", description="Length preset: short | medium | long."),
+    limit_sections: int = Form(5, description="Maximum number of sections."),
+    temp: float = Form(0.0, description="Creativity (0–1) for the storyteller."),
+    top_p: float = Form(0.9, description="Top-p sampling."),
+    title_style: str = Form("canonical", description="Title style."),
+    title_max_words: int = Form(0, description="Title word limit (0 = auto)."),
 ):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(400, "Please upload a .pdf")
@@ -329,6 +426,9 @@ async def explain_endpoint(
     }
 
     data = _gpu("/api/two_stage_story", payload, timeout=1800)
+    for s in data.get("sections", []):
+        if "narrative" not in s and "text" in s:
+            s["narrative"] = s["text"]
     sections = data.get("sections", [])
     outline = data.get("outline", [])
 
@@ -374,8 +474,14 @@ async def explain_endpoint(
 
     }
 
-@app.post("/api/generate_from_text")
-def generate_from_text(req: GenerateFromTextRequest):
+@app.post(
+    "/api/generate_from_text",
+    tags=["Generate"],
+    summary="Text/Markdown → Story",
+    description="Provide text/markdown directly; applies split + story on the GPU VM.",
+    response_model=ExplainResponse,
+)
+def generate_from_text(req: GenerateFromTextRequest = Body(..., examples={"default": generate_from_text_example})):
     # Usa lo stesso flusso a 2 stadi, passando il testo come "markdown"
     if not REMOTE_GPU_URL:
         raise HTTPException(503, "GPU remoto non configurato (REMOTE_GPU_URL).")
@@ -413,6 +519,9 @@ def generate_from_text(req: GenerateFromTextRequest):
     }
 
     data = _gpu("/api/two_stage_story", payload, timeout=1800)
+    for s in data.get("sections", []):
+        if "narrative" not in s and "text" in s:
+            s["narrative"] = s["text"]
     return {
         "persona": data.get("persona", req.persona),
         "title": data.get("title"),
@@ -420,8 +529,14 @@ def generate_from_text(req: GenerateFromTextRequest):
         "sections": data.get("sections", [])
     }
 
-@app.post("/api/regen")
-def regen_sections(req: RegenRequest):
+@app.post(
+    "/api/regen",
+    tags=["Edit"],
+    summary="Regenerate story sections (local)",
+    description="Regenerate one or more sections using local inference (set up `story_ops`).",
+    response_model=RegenResponse,
+)
+def regen_sections(req: RegenRequest = Body(..., examples={"default": regen_request_example})):
     if story_ops is None:
         raise HTTPException(503, "Inferenza locale disabilitata: usare REMOTE_GPU_URL")
     new_story, _alts = story_ops.regen_sections(
@@ -436,10 +551,16 @@ def regen_sections(req: RegenRequest):
     )
     return {"sections": new_story.get("sections", [])}
 
-@app.post("/api/para")
+@app.post(
+    "/api/para",
+    tags=["Edit"],
+    summary="Paraphrase a paragraph (local)",
+    description="Paraphrase a paragraph tailored to a persona using local inference.",
+    response_model=List[Dict[str, Any]], 
+)
 def paraphrase(req: ParaRequest):
     if story_ops is None:
-        raise HTTPException(503, "Inferenza locale disabilitata: usare REMOTE_GPU_URL")
+        raise HTTPException(503, "Local inference disabilitated: use REMOTE_GPU_URL")
     outs = story_ops.paraphrase(
         paragraph=req.text,
         persona=req.persona,
@@ -466,7 +587,13 @@ class RegenVmRequest(BaseModel):
     seg_words: Optional[int] = None
     overlap_words: Optional[int] = None
 
-@app.post("/api/regen_vm")
+@app.post(
+    "/api/regen_vm",
+    tags=["VM Orchestrator"],
+    summary="Regenerate from outline (GPU VM)",
+    description="Regenerate a story given a precomputed outline on the GPU VM.",
+    response_model=ExplainWithOutlineResponse,
+)
 def regen_vm(req: RegenVmRequest):
     if not REMOTE_GPU_URL:
         raise HTTPException(503, "GPU remoto non configurato (REMOTE_GPU_URL).")

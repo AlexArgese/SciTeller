@@ -7,7 +7,7 @@ services:
       - backend
       - authapi
     ports:
-      - "8080:80"
+      - "${FRONTEND_PORT:-8080}:80"
     networks: [scinet]
 
   backend:
@@ -18,7 +18,7 @@ services:
         DP_USERNAME: oauth2
         DP_ACCESS_TOKEN: ${DP_ACCESS_TOKEN}
     environment:
-      REMOTE_GPU_URL: http://host.docker.internal:8018
+      REMOTE_GPU_URL: ${REMOTE_GPU_URL:-http://host.docker.internal:8018}
       DOCPARSE_BIN: docparse
       API_KEY: ${API_KEY}
 
@@ -32,6 +32,10 @@ services:
       - ./hf-cache:/hf-cache    
     expose:
       - "8000"
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks: [scinet]
 
   authapi:
@@ -40,7 +44,7 @@ services:
     image: sciteller/authapi
     environment:
       NODE_ENV: production
-      NEXTAUTH_URL: http://localhost:8080
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:${FRONTEND_PORT:-8080}}
       NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
       AUTH_SECRET: ${AUTH_SECRET}
       NEXTAUTH_TRUST_HOST: "true"
@@ -62,6 +66,8 @@ services:
 
     expose:
       - "3000"
+    ports:
+      - "${AUTH_API_PORT:-3000}:3000"
     networks: [scinet]
 
 networks:

@@ -8,19 +8,19 @@ export default defineConfig({
     port: 5173,
     proxy: {
       // FastAPI
-      '/api/explain':    { target: 'http://127.0.0.1:8000', changeOrigin: true },
-      '/api/qwen_infer': { target: 'http://127.0.0.1:8000', changeOrigin: true },
+      '/api/explain':    { target: (process.env.VITE_BACKEND_URL || 'http://localhost:8000'), changeOrigin: true },
+      '/api/qwen_infer': { target: (process.env.VITE_BACKEND_URL || 'http://localhost:8000'), changeOrigin: true },
 
       // Next.js (solo API di auth/me/proxy PDF, NIENTE /login)
-      '/api/auth': { target: 'http://localhost:3000', changeOrigin: true },
-      '/api/me':   { target: 'http://localhost:3000', changeOrigin: true },
+      '/api/auth': { target: (process.env.VITE_AUTH_URL || 'http://localhost:3000'), changeOrigin: true },
+      '/api/me':   { target: (process.env.VITE_AUTH_URL || 'http://localhost:3000'), changeOrigin: true },
 
       // catch-all API → Next (tienila in fondo)
-      '/api': { target: 'http://localhost:3000', changeOrigin: true },
+      '/api': { target: (process.env.VITE_AUTH_URL || 'http://localhost:3000'), changeOrigin: true },
 
       // opzionale
       '/llm': {
-        target: 'http://127.0.0.1:8000',
+        target: (process.env.VITE_BACKEND_URL || 'http://localhost:8000'),
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/llm/, '/api'),
       },

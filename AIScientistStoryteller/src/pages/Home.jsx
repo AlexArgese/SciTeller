@@ -53,7 +53,7 @@ const ChevronDown = ({ size = 18 }) => (
 
 // ===================== Helpers link -> File (con proxy) =====================
 const PDF_PROXY =
-  import.meta.env?.VITE_PDF_PROXY || "http://localhost:3000/api/proxy/pdf";
+  import.meta.env?.VITE_PDF_PROXY || "/api/proxy/pdf";
 
 function toArxivPdfUrlIfNeeded(raw = "") {
   let url;
