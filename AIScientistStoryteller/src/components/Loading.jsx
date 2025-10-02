@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import styles from "./Loading.module.css";
 
+import Lottie from "lottie-react";
+import animationData from "../assets/data.json";
+
+
 /**
  * Full-page Loading screen (identico nello stile alle altre pagine).
  * Props:
@@ -52,8 +56,13 @@ export default function Loading({
 
         <div className={styles.body}>
           <div className={styles.center}>
-            <div className={styles.loaderWrap}>
-              <div className={styles.spinner} role="status" aria-label="Loading"></div>
+            <div className="loading-container">
+              <Lottie 
+                animationData={animationData} 
+                loop={true}   // loop infinito
+                autoplay={true}
+                style={{ width: 200, height: 200 }} 
+              />
             </div>
           </div>
 

@@ -50,7 +50,21 @@
     border: 1px solid rgba(0,0,0,.06);
     box-shadow: 0 4px 14px rgba(0,0,0,.06);
   }
+  .loading-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    background: white; /* oppure trasparente */
+  }
   
+  .loading-text {
+    margin-top: 16px;
+    font-size: 1rem;
+    color: #444;
+    opacity: 0.7;
+  }
   /* Ticker messaggi */
   .ticker{
     margin-top: 6px;
