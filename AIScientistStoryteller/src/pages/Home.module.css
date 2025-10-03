@@ -4,7 +4,7 @@
   width: calc(var(--container-w)-20%);
   margin: 0 20%;
   padding: var(--sp-8) 10%;
-  border-radius: 28px;
+  border-radius: 5px;
   /* vetro: doppio bordo + highlight */
   backdrop-filter: blur(2px);
   background: var(--glass-bg);
@@ -34,7 +34,7 @@
 .step + .step { border-top: 1px dashed color-mix(in oklab, var(--line-0) 70%, transparent); }
 
 .ball {
-  width: 50px; height: 50px;
+  width: 52px; height: 50px;
   display: grid; place-items: center;
   font-weight: 700;
   color: var(--heading);

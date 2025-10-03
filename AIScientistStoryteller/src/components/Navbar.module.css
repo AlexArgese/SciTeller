@@ -118,14 +118,17 @@
 /* Avatar & menu */
 .avatarWrap { position: relative; }
 .avatarBtn {
-  width: 36px; height: 36px;
+  width: 38px; height: 36px;
   border-radius: 999px;
   overflow: hidden;
-  border: 1px solid var(--line-0);
-  background: color-mix(in oklab, var(--panel) 70%, transparent);
-  box-shadow: var(--shadow-1);
+  background: var(--glass-bg);
+  box-shadow: var(--glass-sd);
+  padding: 0;
+  display: flex;            
+  align-items: center;       
+  justify-content: center;
 }
-.avatarImg { width: 100%; height: 100%; object-fit: cover; }
+.avatarImg { width: 80%; height: 80%; object-fit: cover; border-radius: 9999px;}
 
 .menu {
   position: absolute;

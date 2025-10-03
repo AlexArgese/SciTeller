@@ -376,26 +376,31 @@ export default function Stories(){
         </div>
       </main>
 
-      <button
-        className={openCP ? styles.reopenHandle : styles.recolseHandle}
-        onClick={() => setOpenCP(o => !o)}
-        aria-expanded={openCP}
-      >
-        {openCP ? "›" : "‹"}
-      </button>
+      {selectedStory && (
+        <>
+          <button
+            className={openCP ? styles.reopenHandle : styles.recloseHandle}
+            onClick={() => setOpenCP(o => !o)}
+            aria-expanded={openCP}
+          >
+            {openCP ? "›" : "‹"}
+          </button>
 
-      <ControlPanel
-        open={openCP}
-        story={selectedStory}
-        selectedParagraph={selectedParagraph}
-        cpStage={cpStage}
-        onContinueNotes={handleContinueNotes}
-        onContinueGlobal={handleContinueGlobal}
-        onReadOnPaper={handleReadOnPaper}
-        onChange={handleUpdate}
-        onChangeSections={(next) => handleUpdate({ sections: next })}
-        onJumpToSection={handleScrollToSection}
-      />
+          <ControlPanel
+            open={openCP}
+            story={selectedStory}
+            selectedParagraph={selectedParagraph}
+            cpStage={cpStage}
+            onContinueNotes={handleContinueNotes}
+            onContinueGlobal={handleContinueGlobal}
+            onReadOnPaper={handleReadOnPaper}
+            onChange={handleUpdate}
+            onChangeSections={(next) => handleUpdate({ sections: next })}
+            onJumpToSection={handleScrollToSection}
+          />
+        </>
+      )}
+
     </div>
   );
 }

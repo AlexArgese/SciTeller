@@ -93,8 +93,8 @@ body::after{
   height: 44px; padding: 0 18px; border-radius: 999px;
   font-weight: 600; letter-spacing: .01em;
   transition: transform var(--dur-2) var(--ease-emph), box-shadow var(--dur-2) var(--ease-emph), background var(--dur-2) var(--ease-emph);
-  box-shadow: var(--shadow-1);
-  background: var(--ink-0); color: #fff;
+  box-shadow: var(--glass-blue-sd);
+  background: var(--glass-blue-bg); color: #fff;
 }
 .btn:hover { transform: translateY(-1px); box-shadow: var(--shadow-2); }
 .btn:active { transform: translateY(0); box-shadow: var(--shadow-1); }

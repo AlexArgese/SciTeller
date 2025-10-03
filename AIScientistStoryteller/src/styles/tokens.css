@@ -53,6 +53,7 @@
   --shadow-2: 0 8px 22px rgba(15, 15, 20, .2), 0 2px 8px rgba(15, 15, 20, .2);
   --shadow-3: 0 20px 50px rgba(15, 15, 20, .18);
   --shadow-4: 0 8px 22px rgba(15, 15, 20, .1), 0 2px 8px rgba(15, 15, 20, .1);
+  --shadow-5: 0 4px 11px rgba(15, 15, 20, .2), 0 1px 4px rgba(15, 15, 20, .2);
 
   /* ===== Glass ===== */
   --glass-bg: rgba(255, 255, 255, 0.257);
@@ -60,17 +61,17 @@
   --glass-brd: rgba(255, 255, 255, 0.68);
   --glass-line: rgba(0, 0, 0, 0.334);
   --glass-blur: 6px;
-  --glass-sd: 0 4px 2px var(--glass-brd) inset, 0 -4px 2px var(--glass-brd) inset, 4px 0 2px var(--glass-line) inset, -4px 0 2px var(--glass-line) inset, var(--shadow-2);
-  --glass-CP-sd: 0 4px 2px var(--glass-brd) inset, 0 -4px 2px var(--glass-brd) inset, 4px 0 2px var(--glass-line) inset,  var(--shadow-2);
-  --glass-scope-sd: 3px 0 8px var(--glass-line) inset, var(--shadow-4);
-  --glass-ball-sd: 0 2px 1px var(--glass-brd) inset, 0 -2px 1px var(--glass-brd) inset, 2px 0 1px var(--glass-line) inset, -2px 0 1px var(--glass-line) inset, var(--shadow-2);
-  --glass-blue-sd: 4px 0 2px var(--glass-line) inset, -4px 0 2px var(--glass-line) inset, var(--shadow-2);
-  --glass-blue-toggle-sd: 4px 0 2px var(--glass-line) inset, -7px 0 3px var(--glass-line) inset, var(--shadow-2);
-  --glass-beigeCP-sd: 0 4px 2px var(--glass-brd) inset,  4px 0 6px var(--glass-line) inset, var(--shadow-4);
-  --glass-beigeSB-sd: 0 4px 2px var(--glass-brd) inset,   -4px 0 2px var(--glass-line) inset, var(--shadow-2);
-  --glass-beigeSB-footer-sd: 0 -2px 1px var(--glass-brd) inset, -3px 0 2px var(--glass-line) inset, var(--shadow-2);
-  --glass-item-sd: 0 3px 2px var(--glass-brd) inset, 0 -3px 2px var(--glass-brd) inset, 3px 0 2px var(--glass-line) inset, -3px 0 2px var(--glass-line) inset, var(--shadow-2);
-  --glass-nav-sd: 0 4px 2px var(--glass-brd) inset,   var(--shadow-2);
+  --glass-sd: 0 2px 1px var(--glass-brd) inset, 0 -2px 1px var(--glass-brd) inset, 2px 0 1px var(--glass-line) inset, -2px 0 1px var(--glass-line) inset, var(--shadow-2);
+  --glass-CP-sd: 0 2px 1px var(--glass-brd) inset, 0 -2px 1px var(--glass-brd) inset, 2px 0 1px var(--glass-line) inset,  var(--shadow-2);
+  --glass-scope-sd: 2px 0 4px var(--glass-line) inset, var(--shadow-4);
+  --glass-ball-sd: 0 1px 1px var(--glass-brd) inset, 0 -1px 1px var(--glass-brd) inset, 1px 0 1px var(--glass-line) inset, -1px 0 1px var(--glass-line) inset, var(--shadow-2);
+  --glass-blue-sd: 2px 0 1px var(--glass-line) inset, -2px 0 1px var(--glass-line) inset, var(--shadow-2);
+  --glass-blue-toggle-sd: 2px 0 1px var(--glass-line) inset, -3px 0 1px var(--glass-line) inset, var(--shadow-2);
+  --glass-beigeCP-sd: 0 2px 1px var(--glass-brd) inset,  2px 0 3px var(--glass-line) inset, var(--shadow-4);
+  --glass-beigeSB-sd: 0 2px 1px var(--glass-brd) inset,   -2px 0 1px var(--glass-line) inset, var(--shadow-2);
+  --glass-beigeSB-footer-sd: 0 -2px 1px var(--glass-brd) inset, -2px 0 1px var(--glass-line) inset, var(--shadow-2);
+  --glass-item-sd: 0 2px 1px var(--glass-brd) inset, 0 -2px 1px var(--glass-brd) inset, 2px 0 1px var(--glass-line) inset, -2px 0 1px var(--glass-line) inset, var(--shadow-2);
+  --glass-nav-sd: 0 2px 1px var(--glass-brd) inset,   var(--shadow-5);
 
 
   /* ===== Spacing scale ===== */
@@ -104,7 +105,7 @@
   --z-modal: 30;
   --z-toast: 40;
 
-  --line-paper-bg: repeating-linear-gradient(180deg, rgba(0,0,0,.05) 0 1px, transparent 1px 28px)
+  --line-paper-bg: repeating-linear-gradient(180deg, rgba(0,0,0,.03) 0 1px, transparent 1px 28px)
 }
 
 /* ========================= DARK THEME ========================= */

@@ -32,7 +32,7 @@ export default function StoryView({
   onToggleParagraph,
   onRegisterSectionEl,
 }) {
-  if (!story) return <div className={styles.empty}>Seleziona una storia…</div>;
+  if (!story) return <div className={styles.empty}></div>;
 
   const storyTitle =
     (story.title && !/\.pdf$/i.test(story.title)

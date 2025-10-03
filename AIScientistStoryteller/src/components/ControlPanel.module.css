@@ -15,7 +15,7 @@
   display: grid;
   grid-template-rows: auto 1fr;
 
-  border-radius: 20px 0 0 20px;
+  border-radius: 5px 0 0 5px;
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur));
   backdrop-filter: blur(var(--glass-blur));
@@ -42,10 +42,9 @@
 .panelTitle{
   font-family: var(--font-serif);
   font-weight: 800;
-  font-size: 17px;
+  font-size: 28px;
   letter-spacing: .01em;
   color: var(--heading);
-  margin-bottom: var(--sp-3);
 }
 
 .toggle{

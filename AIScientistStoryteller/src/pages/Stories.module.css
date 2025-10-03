@@ -53,15 +53,15 @@
 
 
 .reopenHandle{
-  position: fixed; right: calc(var(--panel-w) - 5px); top: calc(var(--nav-h) + var(--sp-10));
+  position: fixed; right: calc(var(--panel-w) - 5px); top: calc(var(--nav-h) + var(--sp-7));
   z-index: 0;
   background: var(--glass-blue-bg);
   box-shadow: var(--glass-blue-toggle-sd);
   -webkit-backdrop-filter: blur(2px);
   backdrop-filter: blur(2px);
   color: #fff;
-  padding: 1em;
-  border-radius: 99px 0 0 99px;
+  padding: 0.5em 1em;
+  border-radius: 20px 0 0 20px;
   font-weight: 700;
 
   text-align: center;
@@ -70,16 +70,16 @@
   color: rgb(149, 149, 149);
 }
 
-.recolseHandle{
-  position: fixed; right: -5px; top: calc(var(--nav-h) + var(--sp-10));
+.recloseHandle{
+  position: fixed; right: -5px; top: calc(var(--nav-h) + var(--sp-7));
   z-index: 99999;
   background: var(--glass-blue-bg);
   box-shadow: var(--glass-blue-toggle-sd);
   -webkit-backdrop-filter: blur(2px);
   backdrop-filter: blur(2px);
   color: #fff;
-  padding: 1em;
-  border-radius: 99px 0 0 99px;
+  padding: 0.5em 1em;
+  border-radius: 20px 0 0 20px;
   font-weight: 700;
 
   text-align: center;

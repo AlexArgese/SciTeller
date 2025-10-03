@@ -16,7 +16,7 @@
   height: 100%;
   display: grid;
   grid-template-rows: 1fr auto;
-  border-radius: 0 20px 20px 0;
+  border-radius: 0 5px 5px 0;
   background: var(--bg-navbar);
   -webkit-backdrop-filter: blur(14px);
   backdrop-filter: blur(3px);
@@ -81,7 +81,7 @@
   padding: var(--sp-3);
   border-top: 1px dashed var(--line-0);
   background: rgba(255,255,255,.36);
-  border-radius: 0 0 20px 0;
+  border-radius: 0 0 5px 0;
   box-shadow: var(--glass-beigeSB-footer-sd);
 }
 
