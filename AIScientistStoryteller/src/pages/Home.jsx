@@ -172,7 +172,7 @@ export default function Home() {
   }, [isLoading, phase, activeMsgs.length]);
 
   const RE_START_DOCPARSE = /start\s*docparse/i;
-  const RE_START_STORY = /(docparse\s*ok[^]*?start\s*story)|(^\s*start\s*story)/i;
+  const RE_START_STORY = /(start\s*story|two-?stage\s*(vm|story)|start\s*generation)/i;
 
   const handleBackendLog = (line = "") => {
     const L = String(line);
@@ -301,7 +301,7 @@ export default function Home() {
         preset: o.preset,                 // short|medium|long
         k: o.k,                           // top-k paragrafi per sezione
         max_ctx_chars: o.max_ctx_chars,   // budget contesto per sezione
-        temperature: o.temperature,       // creatività controllata
+        temp: o.temperature,       // creatività controllata
         top_p: o.top_p,                   // clamp 0.85
         limit_sections: 5,
         title_style: "didactic",

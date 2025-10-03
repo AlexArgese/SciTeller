@@ -338,6 +338,26 @@ def _local_story(req: GenerateFromTextRequest):
         title_max_words=int(req.title_max_words),
     )
 
+def _normalize_sections(sections: list[dict]) -> list[dict]:
+    out = []
+    for i, s in enumerate(sections or []):
+        text = s.get("narrative") or s.get("text") or ""
+        # split per paragrafi se non esistono già
+        paras = s.get("paragraphs")
+        if not paras:
+            parts = [p.strip() for p in re.split(r"\n{2,}", text) if p.strip()]
+            if not parts:  # fallback: split su .?!
+                parts = re.split(r'(?<=[.!?])\s+(?=[A-ZÀ-ÖØ-Ý])', text)
+            paras = [p.strip() for p in parts if p.strip()]
+
+        out.append({
+            **s,
+            "id": s.get("id") or f"sec-{i}",
+            "title": s.get("title") or f"Section {i+1}",
+            "paragraphs": paras,
+        })
+    return out
+
 # ========= Routes =========
 @app.get(
     "/health",
@@ -364,6 +384,15 @@ async def explain_endpoint(
     top_p: float = Form(0.9, description="Top-p sampling."),
     title_style: str = Form("canonical", description="Title style."),
     title_max_words: int = Form(0, description="Title word limit (0 = auto)."),
+    # --- firma /api/explain: aggiungi opzionali ---
+    preset: str = Form("medium"),
+    k: int | None = Form(None),
+    max_ctx_chars: int | None = Form(None),
+    retriever: str | None = Form(None),
+    retriever_model: str | None = Form(None),
+    seg_words: int | None = Form(None),
+    overlap_words: int | None = Form(None),
+
 ):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(400, "Please upload a .pdf")
@@ -409,19 +438,18 @@ async def explain_endpoint(
             "temperature": split_temp,
         },
         "storyteller": {
-            "preset": lp["preset"],
+            "preset": (preset or lp["preset"]),
             "temperature": float(temp),
             "top_p": float(top_p),
             "max_new_tokens": lp["max_new_tokens"],
             "min_new_tokens": lp["min_new_tokens"],
             "target_words": lp["target_words"],
-            # === NEW: retrieval ===
-            "retriever": RETRIEVAL_DEFAULTS["retriever"],
-            "retriever_model": RETRIEVAL_DEFAULTS["retriever_model"],
-            "k": RETRIEVAL_DEFAULTS["k"],
-            "max_ctx_chars": RETRIEVAL_DEFAULTS["max_ctx_chars"],
-            "seg_words": RETRIEVAL_DEFAULTS["seg_words"],
-            "overlap_words": RETRIEVAL_DEFAULTS["overlap_words"],
+            "retriever": retriever or RETRIEVAL_DEFAULTS["retriever"],
+            "retriever_model": retriever_model or RETRIEVAL_DEFAULTS["retriever_model"],
+            "k": int(k) if k is not None else RETRIEVAL_DEFAULTS["k"],
+            "max_ctx_chars": int(max_ctx_chars) if max_ctx_chars is not None else RETRIEVAL_DEFAULTS["max_ctx_chars"],
+            "seg_words": int(seg_words) if seg_words is not None else RETRIEVAL_DEFAULTS["seg_words"],
+            "overlap_words": int(overlap_words) if overlap_words is not None else RETRIEVAL_DEFAULTS["overlap_words"],
         }
     }
 
@@ -446,7 +474,7 @@ async def explain_endpoint(
         "persona": persona,
         "title": story_title,
         "docTitle": data.get("paper_title") or file.filename,
-        "sections": sections,
+        "sections": _normalize_sections(sections),
         "meta": {
             "paperText": text,
             "lengthPreset": lp["preset"],
@@ -526,7 +554,7 @@ def generate_from_text(req: GenerateFromTextRequest = Body(..., examples={"defau
         "persona": data.get("persona", req.persona),
         "title": data.get("title"),
         "docTitle": data.get("paper_title", req.title or "Paper"),
-        "sections": data.get("sections", [])
+        "sections": _normalize_sections(data.get("sections", []))
     }
 
 @app.post(
@@ -549,7 +577,7 @@ def regen_sections(req: RegenRequest = Body(..., examples={"default": regen_requ
         temperature=float(req.temp),
         top_p=float(req.top_p),
     )
-    return {"sections": new_story.get("sections", [])}
+    return {"sections": _normalize_sections(new_story.get("sections", []))}
 
 @app.post(
     "/api/para",
@@ -624,7 +652,7 @@ def regen_vm(req: RegenVmRequest):
         "persona": data.get("persona", req.persona),
         "title": data.get("title") or req.title or "Paper",
         "docTitle": data.get("paper_title") or req.title or "Paper",
-        "sections": data.get("sections", []),
+        "sections": _normalize_sections(data.get("sections", [])),
         "outline": data.get("outline", []),
         "meta": data.get("meta", {}),
     }

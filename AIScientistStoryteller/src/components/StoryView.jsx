@@ -3,7 +3,7 @@ import styles from "./StoryView.module.css";
 
 function splitIntoParagraphs(txt) {
   if (!txt) return [];
-  let clean = String(txt).replace(/\r\n/g, "\n").trim();
+  let clean = String(txt).replace(/\r\n/g, "\n").replace(/\u00a0/g, " ").trim();
   let parts = clean.split(/\n{2,}|\r?\n\s*\r?\n/g);
   if (parts.length === 1) {
     parts = clean
@@ -56,9 +56,22 @@ export default function StoryView({
           (typeof s.text === "string" && s.text) ||
           (typeof s.narrative === "string" && s.narrative) ||
           "";
-        const paragraphs = Array.isArray(s.paragraphs) && s.paragraphs.length
+          const providedParas = Array.isArray(s.paragraphs)
           ? s.paragraphs.map(p => (typeof p === "string" ? p.trim() : "")).filter(Boolean)
-          : splitIntoParagraphs(rawText);
+          : [];
+        
+        const looksLikeSingleBlob =
+          providedParas.length === 1 && (providedParas[0]?.length || 0) > 280;
+        
+        const candidateText = (typeof rawText === "string" && rawText.trim())
+          ? rawText
+          : providedParas.join("\n\n");
+        
+        const needResplit = providedParas.length <= 1 || looksLikeSingleBlob;
+        const paragraphs = needResplit
+          ? splitIntoParagraphs(candidateText)
+          : providedParas;
+        
         return {
           ...s,
           id,

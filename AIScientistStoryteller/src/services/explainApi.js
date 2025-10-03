@@ -24,6 +24,9 @@ export async function explainPdf({ file, persona, options = {} }) {
   if (options.top_p != null) fd.append("top_p", String(options.top_p));
   if (options.title_style) fd.append("title_style", options.title_style);
   if (options.title_max_words != null) fd.append("title_max_words", String(options.title_max_words));
+  if (options.preset) fd.append("preset", options.preset);
+  if (options.k != null) fd.append("k", String(options.k));
+  if (options.max_ctx_chars != null) fd.append("max_ctx_chars", String(options.max_ctx_chars));
 
   const url = `${API_BASE}/api/explain`;
   console.debug("[explainPdf] POST", url, { persona, hasFile: !!file, options });
