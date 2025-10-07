@@ -6,9 +6,54 @@ import PdfViewer from "../components/PdfViewer.jsx";
 import styles from "./Stories.module.css";
 import {
   getStories, getStory, createStory, updateStory, deleteStory,
-  generateFromText, getRevisions,
+  generateFromText, getRevisions, regenerateSelectedSections,
 } from "../services/storiesApi.js";
 import Loading from "../components/Loading.jsx";
+
+// --- mapping sezioni selezionate (IDs visibili) -> indici assoluti nell'array sections
+function resolveTargetsFromIds(story, sectionIds = []) {
+  const all = Array.isArray(story?.sections) ? story.sections : [];
+  const visible = all.map((s, i) => ({ s, i })).filter(({ s }) => s?.visible !== false);
+  const visIdToAbsIndex = new Map(
+    visible.map(({ s, i }) => [ (s.id ?? s.sectionId ?? String(i)), i ])
+  );
+  return (sectionIds || [])
+    .map(id => visIdToAbsIndex.get(id))
+    .filter(i => Number.isInteger(i));
+}
+
+function getPaperTextFromStory(story) {
+  // preferisci quello messo dal backend in meta.paperText (ex explain/generate)
+  const t = story?.meta?.paperText;
+  if (typeof t === "string" && t.trim()) return t;
+
+  // fallback: ricostruisci dal contenuto corrente
+  const sections = Array.isArray(story?.sections) ? story.sections : [];
+  return sections
+    .map((s, i) => {
+      const h = s?.title ? `# ${String(s.title).trim()}\n\n` : `# Section ${i + 1}\n\n`;
+      const raw =
+        (typeof s?.text === "string" && s.text) ||
+        (typeof s?.narrative === "string" && s.narrative) ||
+        (Array.isArray(s?.paragraphs) ? s.paragraphs.join("\n\n") : "");
+      return (h + (raw || "")).trim();
+    })
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+// helper: map ID → indici ordinati
+function idsToIndexes(sections, ids) {
+  const byId = new Map(
+    (sections || []).map((s, i) => [String(s?.id ?? s?.sectionId ?? i), i])
+  );
+  const idxs = [];
+  for (const id of ids || []) {
+    const key = String(id);
+    if (byId.has(key)) idxs.push(byId.get(key));
+  }
+  return idxs.sort((a, b) => a - b);
+}
 
 export default function Stories(){
   const [stories, setStories] = useState([]);
@@ -17,11 +62,16 @@ export default function Stories(){
   const [loading, setLoading] = useState(true);
 
   const [selectedParagraph, setSelectedParagraph] = useState(null);
+  const [selectedSectionId, setSelectedSectionId] = useState(null);
   const [cpStage, setCpStage] = useState("default");
 
   const [showPdf, setShowPdf] = useState(false);
   const [pdfError, setPdfError] = useState(null);
   const [pdfHighlights, setPdfHighlights] = useState([]);
+
+  const [busySectionIds, setBusySectionIds] = useState([]);
+
+  const [regenTargets, setRegenTargets] = useState([]);
 
   // pagina di mezzo anche durante rigenerazione
   const [isRegenerating, setIsRegenerating] = useState(false);
@@ -173,6 +223,7 @@ export default function Stories(){
         setStories(prev => prev.map(s => (s.id === withVersions.id ? withVersions : s)));
         setCpStage("default");
         setSelectedParagraph(null);
+        setSelectedSectionId(null);
       } catch (err) {
         console.error(err);
         alert(err?.message || "Errore durante la rigenerazione.");
@@ -182,7 +233,80 @@ export default function Stories(){
       return;
     }
 
-    // flusso normale per altri update
+    if (patch?._action === "regenerate_sections") {
+      const st = selectedStory;
+      if (!st) return;
+    
+      const sectionIds = Array.isArray(patch.sectionIds) ? patch.sectionIds : [];
+      if (sectionIds.length === 0) {
+        alert("Nessuna sezione valida da rigenerare.");
+        return;
+      }
+    
+      // calcola targets (indici 0-based) a partire dagli ID selezionati
+      const sections = Array.isArray(st?.sections) ? st.sections : [];
+      const targets = idsToIndexes(sections, sectionIds);
+    
+      // spinner SOLO sulle sezioni selezionate (usa gli ID, come già fai nello StoryView)
+      setBusySectionIds(sectionIds);
+    
+      // costruisci il body richiesto dal FastAPI
+      const args = {
+        text: getPaperTextFromStory(st),
+        persona: st?.persona || st?.meta?.persona || "General Public",
+        title: st?.title || st?.docTitle || "Story",
+        sections,                      // array completo corrente
+        targets,                       // indici delle sezioni da rigenerare
+        temp: Number(patch?.temp ?? st?.meta?.upstreamParams?.temp ?? 0),
+        top_p: Number(st?.meta?.upstreamParams?.top_p ?? 0.9),
+        // se vuoi: retriever / k / ecc. (opzionali) → aggiungili qui
+      };
+    
+      try {
+        // CHIAMA il backend FastAPI (usando la funzione già exportata dai services)
+        const updatedStoryShape = await regenerateSelectedSections(st.id, args);
+        // `updatedStoryShape` = { persona, title, sections, meta }
+    
+        // Salva come nuova revisione nel DB (PATCH /api/stories/:id)
+        const patchSave = {
+          title: st?.title || updatedStoryShape?.title || "Story",
+          persona: updatedStoryShape?.persona || args.persona,
+          sections: Array.isArray(updatedStoryShape?.sections) ? updatedStoryShape.sections : sections,
+          meta: {
+            ...(st?.meta || {}),
+            ...(updatedStoryShape?.meta || {}),
+            upstreamParams: {
+              ...(updatedStoryShape?.meta?.upstreamParams || {}),
+              mode: "regen_partial_vm",
+              temp: args.temp,
+              top_p: args.top_p,
+              lengthPreset: String(patch?.lengthPreset || st?.meta?.upstreamParams?.lengthPreset || "medium"),
+              targets,
+            },
+          },
+          baseRevisionId: st?.current_revision_id || null,
+        };
+    
+        const saved = await updateStory(st.id, patchSave);
+    
+        // ricarica timeline versioni
+        let versions = [];
+        try { versions = await getRevisions(st.id); } catch {}
+        const withVersions = { ...saved, versions, defaultVersionId: saved?.current_revision_id || null };
+    
+        setStories(prev => prev.map(s => (s.id === withVersions.id ? withVersions : s)));
+        setCpStage("default");
+        setSelectedParagraph(null);
+        setSelectedSectionId(null);
+      } catch (err) {
+        console.error("regen_sections_vm failed", err);
+        alert(err?.message || "Error during section regeneration.");
+      } finally {
+        setBusySectionIds([]);
+      }
+      return;
+    }    
+
     setLoading(true);
     try {
       await updateStory(selectedStory.id, patch);
@@ -200,6 +324,55 @@ export default function Stories(){
     }
   }
 
+  async function handleRegenSelectedSection() {
+    const st = selectedStory;
+    if (!st) return;
+    if (!selectedSectionId) {
+      alert("First select a section to regenerate.");
+      return;
+    }
+  
+    const sectionId = selectedSectionId;
+    const baseRevisionId = st?.current_revision_id || st?.defaultVersionId || null;
+  
+    const upstream = st?.meta?.upstreamParams || {};
+    const knobs = {
+      temp: Number(upstream?.temp ?? 0.0),
+      lengthPreset: String(upstream?.lengthPreset || "medium"),
+      top_p: Number(upstream?.top_p ?? 0.9),
+      retriever: upstream?.retriever,
+      retriever_model: upstream?.retriever_model,
+      k: upstream?.k,
+      max_ctx_chars: upstream?.max_ctx_chars,
+      seg_words: upstream?.seg_words,
+      overlap_words: upstream?.overlap_words,
+    };
+  
+    try {
+      // 👇 niente overlay globale, solo spinner sulla sezione
+      setBusySectionIds([sectionId]);
+  
+      const updated = await regenerateSelectedSections(st.id, {
+        sectionIds: [sectionId],
+        baseRevisionId,
+        notes: "",
+        ...knobs,
+      });
+  
+      let versions = [];
+      try { versions = await getRevisions(st.id); } catch {}
+      const withVersions = { ...updated, versions, defaultVersionId: updated?.current_revision_id || null };
+      setStories(prev => prev.map(s => (s.id === withVersions.id ? withVersions : s)));
+      setSelectedSectionId(null);
+    } catch (err) {
+      console.error(err);
+      alert(err?.message || "Error during section regeneration.");
+    } finally {
+      setBusySectionIds([]);
+    }
+  }
+  
+
   async function handleDelete(id) {
     await deleteStory(id);
     const next = await getStories();
@@ -207,6 +380,7 @@ export default function Stories(){
     if (id === selectedId) {
       setSelectedId(next[0]?.id ?? null);
       setSelectedParagraph(null);
+      setSelectedSectionId(null);
       setCpStage("default");
       setShowPdf(false);
       setPdfError(null);
@@ -220,6 +394,14 @@ export default function Stories(){
       selectedParagraph.index === index;
 
     setSelectedParagraph(same ? null : { sectionId, index, text });
+    setSelectedSectionId(sectionId);
+    setCpStage("default");
+    if (!openCP) setOpenCP(true);
+  }
+
+  function handleSelectSection(sectionId) {
+    setSelectedSectionId(prev => (prev === sectionId ? null : sectionId));
+    setSelectedParagraph(null); // deseleziona eventuale paragrafo
     setCpStage("default");
     if (!openCP) setOpenCP(true);
   }
@@ -245,7 +427,7 @@ export default function Stories(){
   };
 
   const handleContinueNotes  = () => { setCpStage("notes"); };
-  const handleContinueGlobal = () => { setSelectedParagraph(null); setCpStage("notes"); };
+  const handleContinueGlobal = () => { setSelectedParagraph(null); setSelectedSectionId(null); setCpStage("notes"); };
 
   const SIDEBAR_W = 300;
   const PANEL_W   = 380;
@@ -314,8 +496,10 @@ export default function Stories(){
         items={stories}
         selectedId={selectedId}
         onSelect={async (id) => {
+          setBusySectionIds([]);
           setSelectedId(id);
           setSelectedParagraph(null);
+          setSelectedSectionId(null);
           setCpStage("default");
           setShowPdf(false);
           setPdfError(null);
@@ -368,8 +552,11 @@ export default function Stories(){
               <StoryView
                 story={selectedStory}
                 selectedParagraph={selectedParagraph}
+                selectedSectionId={selectedSectionId}
                 onToggleParagraph={handleToggleParagraph}
+                onSelectSection={handleSelectSection}
                 onRegisterSectionEl={handleRegisterSectionEl}
+                busySectionIds={busySectionIds}
               />
             )}
           </div>
@@ -385,6 +572,16 @@ export default function Stories(){
           >
             {openCP ? "›" : "‹"}
           </button>
+
+          {selectedSectionId && (
+            <button
+              style={{ position:"absolute", right: 20, bottom: 20, zIndex: 2 }}
+              onClick={handleRegenSelectedSection}
+              title="Rigenera solo questa sezione (mantiene le altre)"
+            >
+              Rigenera sezione
+            </button>
+          )}
 
           <ControlPanel
             open={openCP}

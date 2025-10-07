@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useLayoutEffect } from "react";
 import styles from "./ControlPanel.module.css";
-
 export default function ControlPanel({
   open,
   story,
@@ -75,6 +74,20 @@ export default function ControlPanel({
       lastLaneUse.push(null);
       return lastLaneUse.length - 1;
     }
+
+    function idsToIndexes(sections, ids) {
+      const idxs = [];
+      const byId = new Map(
+        (sections || []).map((s, i) => [String(s.id ?? s.sectionId ?? i), i])
+      );
+      for (const id of ids || []) {
+        const key = String(id);
+        if (byId.has(key)) idxs.push(byId.get(key));
+      }
+      // preserva l’ordine visivo
+      return idxs.sort((a, b) => a - b);
+    }
+    
 
     const out = [];
     for (const v of sorted) {
@@ -416,6 +429,24 @@ export default function ControlPanel({
 
   async function submitWithNotes(){
     if (!pendingAction || !onChange) return;
+
+    // Caso SEZIONI: deleghiamo tutto a Stories.jsx (mapping IDs→targets + API call)
+    if (pendingAction.type === "sections") {
+      await onChange({
+        _action: "regenerate_sections",
+        scope: "sections",
+        sectionIds: pendingAction.payload.sectionIds,
+        temp: clamp01(pendingAction.payload?.temp ?? sectionTemp),
+        lengthPreset,
+        notes: notes.trim(),
+        storyId: story?.id,
+      });
+      setPendingAction(null);
+      setNotes("");
+      return;
+    }
+
+    // Altri casi: lasciamo la pipeline esistente al parent
     const payload = {
       _action: mapActionToCommand(pendingAction),
       scope: pendingAction.type,
@@ -427,6 +458,7 @@ export default function ControlPanel({
     setPendingAction(null);
     setNotes("");
   }
+
 
   const versions = Array.isArray(story?.versions) ? story.versions : [];
   const defaultVersionId = story?.defaultVersionId || story?.meta?.defaultVersionId || null;

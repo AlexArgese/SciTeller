@@ -1,6 +1,9 @@
 import { useMemo } from "react";
 import styles from "./StoryView.module.css";
 
+import Lottie from "lottie-react";
+import animationData from "../assets/data.json";
+
 function splitIntoParagraphs(txt) {
   if (!txt) return [];
   let clean = String(txt).replace(/\r\n/g, "\n").replace(/\u00a0/g, " ").trim();
@@ -29,8 +32,11 @@ function slugify(s, fallback = "section") {
 export default function StoryView({
   story,
   selectedParagraph,
+  selectedSectionId,
   onToggleParagraph,
+  onSelectSection,
   onRegisterSectionEl,
+  busySectionIds = [],
 }) {
   if (!story) return <div className={styles.empty}></div>;
 
@@ -42,36 +48,36 @@ export default function StoryView({
     story.paper_title ||
     "Title Story";
 
+  const busySet = useMemo(() => new Set(busySectionIds || []), [busySectionIds]);
+
   // Sezioni visibili normalizzate (id, paragraphs)
   const sections = useMemo(() => {
     const src = Array.isArray(story.sections) ? story.sections : [];
     return src
       .filter(s => s?.visible !== false)
       .map((s, i) => {
-        const id =
-          s.id ??
-          s.sectionId ??
-          `${slugify(s.title, `section-${i + 1}`)}-${i + 1}`; // id stabile
+        const id = String(s.id ?? s.sectionId ?? i);
         const rawText =
           (typeof s.text === "string" && s.text) ||
           (typeof s.narrative === "string" && s.narrative) ||
           "";
-          const providedParas = Array.isArray(s.paragraphs)
+        const providedParas = Array.isArray(s.paragraphs)
           ? s.paragraphs.map(p => (typeof p === "string" ? p.trim() : "")).filter(Boolean)
           : [];
-        
+
         const looksLikeSingleBlob =
           providedParas.length === 1 && (providedParas[0]?.length || 0) > 280;
-        
-        const candidateText = (typeof rawText === "string" && rawText.trim())
-          ? rawText
-          : providedParas.join("\n\n");
-        
+
+        const candidateText =
+          (typeof rawText === "string" && rawText.trim())
+            ? rawText
+            : providedParas.join("\n\n");
+
         const needResplit = providedParas.length <= 1 || looksLikeSingleBlob;
         const paragraphs = needResplit
           ? splitIntoParagraphs(candidateText)
           : providedParas;
-        
+
         return {
           ...s,
           id,
@@ -94,36 +100,77 @@ export default function StoryView({
     <article>
       <h1 className={styles.title}>{storyTitle}</h1>
 
-      {sections.map((sec, i) => (
-        <section
-          key={sec.id}
-          id={`section-${sec.id}`}
-          data-section-id={sec.id}
-          className={styles.section}
-          ref={(el) => { if (el) onRegisterSectionEl?.(sec.id, el); }}
-        >
-          <h3 className={styles.sectionTitle}>{sec.title}</h3>
+      {sections.map((sec) => {
+        const isBusy = busySet.has(sec.id);
 
-          {sec.paragraphs.map((p, idx) => {
-            const isSel =
-              selectedParagraph &&
-              selectedParagraph.sectionId === sec.id &&
-              selectedParagraph.index === idx;
+        return (
+          <section
+            key={sec.id}
+            id={`section-${sec.id}`}
+            data-section-id={sec.id}
+            aria-busy={isBusy ? "true" : "false"}
+            className={`${styles.section} ${selectedSectionId === sec.id ? styles.sectionActive : ""}`}
+            style={{ position: "relative" }}
+            onClick={(e) => {
+              if (isBusy) return; // disabilita click mentre rigenera
+              if (e.target?.tagName?.toLowerCase() === "p") return;
+              onSelectSection?.(sec.id);
+            }}
+            ref={(el) => { if (el) onRegisterSectionEl?.(sec.id, el); }}
+          >
+            <h3
+              className={styles.sectionTitle}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (!isBusy) onSelectSection?.(sec.id);
+              }}
+            >
+              {sec.title}
+            </h3>
 
-            return (
-              <p
-                key={idx}
-                className={`${styles.p} ${styles.pSelectable} ${isSel ? styles.pActive : ""}`}
-                onClick={() => onToggleParagraph?.(sec.id, idx, p)}
+            {isBusy ? (
+              // SOLO LOADER (nessun testo)
+              <div
+                style={{
+                  minHeight: 140,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  opacity: 0.9,
+                }}
               >
-                {p}
-              </p>
-            );
-          })}
+                <Lottie
+                  animationData={animationData}
+                  loop
+                  autoplay
+                  style={{ width: 120, height: 120 }}
+                />
+              </div>
+            ) : (
+              <>
+                {sec.paragraphs.map((p, idx) => {
+                  const isSel =
+                    selectedParagraph &&
+                    selectedParagraph.sectionId === sec.id &&
+                    selectedParagraph.index === idx;
 
-          {sec.hasImage && <div className={styles.imageBox}>Image or table</div>}
-        </section>
-      ))}
+                  return (
+                    <p
+                      key={idx}
+                      className={`${styles.p} ${styles.pSelectable} ${isSel ? styles.pActive : ""}`}
+                      onClick={() => onToggleParagraph?.(sec.id, idx, p)}
+                    >
+                      {p}
+                    </p>
+                  );
+                })}
+
+                {sec.hasImage && <div className={styles.imageBox}>Image or table</div>}
+              </>
+            )}
+          </section>
+        );
+      })}
     </article>
   );
 }

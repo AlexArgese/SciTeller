@@ -163,14 +163,12 @@ os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 
 BASE_DIR = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE_DIR))
-story_ops = None
 
 # ========= FastAPI =========
 TAGS_METADATA = [
     {"name": "Health", "description": "Liveness and readiness of the service."},
     {"name": "Explain", "description": "Upload a PDF → parse it → run 2-stage generation on the GPU VM → story JSON."},
     {"name": "Generate", "description": "Provide text/markdown → run 2-stage generation on the GPU VM → story JSON."},
-    {"name": "Edit", "description": "Local-only utilities to regenerate sections or paraphrase a paragraph."},
     {"name": "VM Orchestrator", "description": "Regenerate a story from a precomputed outline on the GPU VM."},
 ]
 
@@ -235,27 +233,27 @@ class GenerateFromTextRequest(BaseModel):
     seg_words: Optional[int] = None
     overlap_words: Optional[int] = None
 
-class RegenRequest(BaseModel):
+class RegenSectionsVmReq(BaseModel):
     text: str
     persona: str
-    story: StoryIn
-    sections: List[str]
-    length: str = "long"
-    words: int = 0
-    alts: int = 1
-    temp: float = 0.7
+    title: Optional[str] = "Paper"
+    sections: List[Dict[str, Any]]           # sezioni correnti [{id?, title, text?, paragraphs?, description?}, ...]
+    targets: List[int]                        # indici da rigenerare (es: [0,2]), oppure passa titles se preferisci
+    temp: float = 0.0
     top_p: float = 0.9
+    # retrieval opzionali
+    retriever: Optional[str] = None
+    retriever_model: Optional[str] = None
+    k: Optional[int] = None
+    max_ctx_chars: Optional[int] = None
+    seg_words: Optional[int] = None
+    overlap_words: Optional[int] = None
 
-class RegenResponse(BaseModel):
-    sections: List[SectionOut]
-
-class ParaRequest(BaseModel):
+class RegenSectionsVmResp(BaseModel):
     persona: str
-    text: str
-    words: int = 150
-    alts: int = 1
-    temp: float = 0.7
-    top_p: float = 0.9
+    title: Optional[str] = None
+    sections: List[Dict[str, Any]]
+    meta: Optional[Dict[str, Any]] = None
 
 
 GenerateFromTextRequest.__doc__ = """
@@ -281,34 +279,6 @@ generate_from_text_example = {
     }
 }
 
-RegenRequest.__doc__ = """
-Regenerate one or more sections given the current story JSON.
-"""
-
-regen_request_example = {
-    "summary": "Regenerate 2 sections with creativity 0.7",
-    "value": {
-        "text": "clean markdown ...",
-        "persona": "General Public",
-        "story": {
-            "persona": "General Public",
-            "sections": [
-                {"title": "Intro", "narrative": "...."},
-                {"title": "Method", "narrative": "...."}
-            ]
-        },
-        "sections": ["Intro", "Method"],
-        "length": "long",
-        "words": 0,
-        "alts": 1,
-        "temp": 0.7,
-        "top_p": 0.9
-    }
-}
-
-ParaRequest.__doc__ = """
-Targeted paraphrase of a single paragraph tailored to a persona.
-"""
 
 # ========= Helpers =========
 def _headers():
@@ -325,18 +295,6 @@ def _gpu(url_path: str, payload: dict, timeout: int = 1800):
         raise HTTPException(r.status_code, f"GPU service error: {r.text}")
     return r.json()
 
-def _local_story(req: GenerateFromTextRequest):
-    return story_ops.story_full(
-        req.text, req.persona,
-        title=(req.title or ""),
-        preset=req.length,
-        words=(req.words or None) if req.words > 0 else None,
-        limit_sections=int(req.limit_sections),
-        temp_sections=float(req.temp),
-        top_p_sections=float(req.top_p),
-        title_style=req.title_style,
-        title_max_words=int(req.title_max_words),
-    )
 
 def _normalize_sections(sections: list[dict]) -> list[dict]:
     out = []
@@ -469,7 +427,14 @@ async def explain_endpoint(
     )
 
     print(story_title)
-        
+
+    eff_retriever       = retriever or RETRIEVAL_DEFAULTS["retriever"]
+    eff_retriever_model = retriever_model or RETRIEVAL_DEFAULTS["retriever_model"]
+    eff_k               = int(k) if k is not None else RETRIEVAL_DEFAULTS["k"]
+    eff_max_ctx_chars   = int(max_ctx_chars) if max_ctx_chars is not None else RETRIEVAL_DEFAULTS["max_ctx_chars"]
+    eff_seg_words       = int(seg_words) if seg_words is not None else RETRIEVAL_DEFAULTS["seg_words"]
+    eff_overlap_words   = int(overlap_words) if overlap_words is not None else RETRIEVAL_DEFAULTS["overlap_words"]
+
     return {
         "persona": persona,
         "title": story_title,
@@ -487,12 +452,12 @@ async def explain_endpoint(
                 "max_new_tokens": lp["max_new_tokens"],
                 "min_new_tokens": lp["min_new_tokens"],
                 "target_words": lp["target_words"],
-                "retriever": RETRIEVAL_DEFAULTS["retriever"],
-                "retriever_model": RETRIEVAL_DEFAULTS["retriever_model"],
-                "k": RETRIEVAL_DEFAULTS["k"],
-                "max_ctx_chars": RETRIEVAL_DEFAULTS["max_ctx_chars"],
-                "seg_words": RETRIEVAL_DEFAULTS["seg_words"],
-                "overlap_words": RETRIEVAL_DEFAULTS["overlap_words"],
+                "retriever": eff_retriever,
+                "retriever_model": eff_retriever_model,
+                "k": eff_k,
+                "max_ctx_chars": eff_max_ctx_chars,
+                "seg_words": eff_seg_words,
+                "overlap_words": eff_overlap_words,
             },
             "splitterParams": {
                 "max_new_tokens": 768,
@@ -550,54 +515,43 @@ def generate_from_text(req: GenerateFromTextRequest = Body(..., examples={"defau
     for s in data.get("sections", []):
         if "narrative" not in s and "text" in s:
             s["narrative"] = s["text"]
+
+    sections = data.get("sections", [])
+    outline  = data.get("outline", [])
+
+    eff_retriever       = req.retriever or RETRIEVAL_DEFAULTS["retriever"]
+    eff_retriever_model = req.retriever_model or RETRIEVAL_DEFAULTS["retriever_model"]
+    eff_k               = int(req.k) if req.k is not None else RETRIEVAL_DEFAULTS["k"]
+    eff_max_ctx_chars   = int(req.max_ctx_chars) if req.max_ctx_chars is not None else RETRIEVAL_DEFAULTS["max_ctx_chars"]
+    eff_seg_words       = int(req.seg_words) if req.seg_words is not None else RETRIEVAL_DEFAULTS["seg_words"]
+    eff_overlap_words   = int(req.overlap_words) if req.overlap_words is not None else RETRIEVAL_DEFAULTS["overlap_words"]
+
     return {
         "persona": data.get("persona", req.persona),
         "title": data.get("title"),
         "docTitle": data.get("paper_title", req.title or "Paper"),
-        "sections": _normalize_sections(data.get("sections", []))
+        "sections": _normalize_sections(sections),
+        "meta": {
+            "paperText": req.text,                 # 👈 serve dopo per regen parziale/nuove chiamate
+            "lengthPreset": (getattr(req, "length_preset", None) or req.length or "medium"),
+            "creativity": int(float(req.temp or 0.0) * 100),
+            "outline": outline,
+            "storytellerParams": {
+                "preset": lp["preset"],
+                "temperature": float(req.temp),
+                "top_p": float(req.top_p),
+                "max_new_tokens": lp["max_new_tokens"],
+                "min_new_tokens": lp["min_new_tokens"],
+                "target_words": lp["target_words"],
+                "retriever": eff_retriever,
+                "retriever_model": eff_retriever_model,
+                "k": eff_k,
+                "max_ctx_chars": eff_max_ctx_chars,
+                "seg_words": eff_seg_words,
+                "overlap_words": eff_overlap_words,
+            },
+        },
     }
-
-@app.post(
-    "/api/regen",
-    tags=["Edit"],
-    summary="Regenerate story sections (local)",
-    description="Regenerate one or more sections using local inference (set up `story_ops`).",
-    response_model=RegenResponse,
-)
-def regen_sections(req: RegenRequest = Body(..., examples={"default": regen_request_example})):
-    if story_ops is None:
-        raise HTTPException(503, "Inferenza locale disabilitata: usare REMOTE_GPU_URL")
-    new_story, _alts = story_ops.regen_sections(
-        req.text, req.persona,
-        story_json=req.story.model_dump(),
-        sections_to_regen=req.sections,
-        preset=req.length,
-        words=(req.words or None) if req.words > 0 else None,
-        alts=max(1, req.alts),
-        temperature=float(req.temp),
-        top_p=float(req.top_p),
-    )
-    return {"sections": _normalize_sections(new_story.get("sections", []))}
-
-@app.post(
-    "/api/para",
-    tags=["Edit"],
-    summary="Paraphrase a paragraph (local)",
-    description="Paraphrase a paragraph tailored to a persona using local inference.",
-    response_model=List[Dict[str, Any]], 
-)
-def paraphrase(req: ParaRequest):
-    if story_ops is None:
-        raise HTTPException(503, "Local inference disabilitated: use REMOTE_GPU_URL")
-    outs = story_ops.paraphrase(
-        paragraph=req.text,
-        persona=req.persona,
-        target_words=max(50, min(300, int(req.words or 150))),
-        alts=max(1, int(req.alts or 1)),
-        temperature=float(req.temp or 0.7),
-        top_p=float(req.top_p or 0.9),
-    )
-    return outs
 
 class RegenVmRequest(BaseModel):
     persona: str
@@ -656,3 +610,129 @@ def regen_vm(req: RegenVmRequest):
         "outline": data.get("outline", []),
         "meta": data.get("meta", {}),
     }
+
+@app.post(
+    "/api/regen_sections_vm",
+    tags=["VM Orchestrator"],
+    summary="Rigenera SOLO alcune sezioni (via outline, una sola chiamata VM)",
+    response_model=RegenSectionsVmResp,
+)
+def regen_sections_vm(req: RegenSectionsVmReq):
+    if not REMOTE_GPU_URL:
+        raise HTTPException(503, "GPU remoto non configurato (REMOTE_GPU_URL).")
+
+    persona  = req.persona or "General Public"
+    title    = req.title or "Paper"
+    text     = req.text or ""
+    sections = req.sections or []
+    targets  = set(int(i) for i in (req.targets or []) if isinstance(i, int))
+
+    # 1) Costruisci l'outline completo (title + description)
+    def _desc_from(sec: dict) -> str:
+        # usa description se c'è, altrimenti la prima frase/testo breve
+        if isinstance(sec.get("description"), str) and sec["description"].strip():
+            return sec["description"].strip()
+        raw = (sec.get("text") or "") if isinstance(sec.get("text"), str) else ""
+        if not raw:
+            paras = sec.get("paragraphs") or []
+            raw = paras[0] if paras else ""
+        # piglia le prime ~2 frasi come hint
+        parts = re.split(r'(?<=[.!?])\s+(?=[A-ZÀ-ÖØ-Ý])', raw.strip())
+        return " ".join(parts[:2]).strip()
+
+    outline = [
+        {
+            "title": (sec.get("title") or f"Section {i+1}"),
+            "description": _desc_from(sec) or "",
+        }
+        for i, sec in enumerate(sections)
+    ]
+
+    # 2) Chiama la VM UNA VOLTA come negli altri endpoint (coerente con /api/explain)
+    payload = {
+        "persona": persona,
+        "paper_title": title,
+        "cleaned_text": text,
+        "outline": outline,
+        "storyteller": {
+            "preset": "medium",
+            "temperature": float(req.temp or 0.0),
+            "top_p": float(req.top_p or 0.9),
+            **({ "retriever": req.retriever } if req.retriever is not None else {}),
+            **({ "retriever_model": req.retriever_model } if req.retriever_model is not None else {}),
+            **({ "k": int(req.k) } if req.k is not None else {}),
+            **({ "max_ctx_chars": int(req.max_ctx_chars) } if req.max_ctx_chars is not None else {}),
+            **({ "seg_words": int(req.seg_words) } if req.seg_words is not None else {}),
+            **({ "overlap_words": int(req.overlap_words) } if req.overlap_words is not None else {}),
+        },
+    }
+    data = _gpu("/api/two_stage_story_from_outline", payload, timeout=1800)
+
+    # 3) Normalizza output VM e fai MERGE selettivo
+    new_secs = _normalize_sections(data.get("sections", []))
+
+    def _norm_keep(sec: dict, i: int) -> dict:
+        # normalizza la sezione "kept" per avere sempre paragraphs coerenti
+        paras = sec.get("paragraphs") or []
+        if not paras and isinstance(sec.get("text"), str):
+            parts = [p.strip() for p in re.split(r"\n{2,}", sec["text"]) if p.strip()]
+            if not parts:
+                parts = re.split(r'(?<=[.!?])\s+(?=[A-ZÀ-ÖØ-Ý])', sec["text"])
+            paras = [p.strip() for p in parts if p.strip()]
+        return {
+            "id": sec.get("id") or f"sec-{i}",
+            "title": sec.get("title") or f"Section {i+1}",
+            "text": sec.get("text") or "",
+            "paragraphs": paras,
+            "hasImage": bool(sec.get("hasImage")),
+            "visible": sec.get("visible", True),
+            "description": sec.get("description") or None,
+        }
+
+    merged = []
+    for i, old in enumerate(sections):
+        if i in targets and i < len(new_secs):
+            gen = new_secs[i]
+            merged.append({
+                "id": (old.get("id") or f"sec-{i}"),
+                "title": gen.get("title") or old.get("title") or f"Section {i+1}",
+                "text": gen.get("text") or gen.get("narrative") or "",
+                "paragraphs": gen.get("paragraphs") or [],
+                "hasImage": bool(old.get("hasImage")),
+                "visible": old.get("visible", True),
+                "description": old.get("description") or None,
+            })
+        else:
+            merged.append(_norm_keep(old, i))
+
+    # 4) Meta semplice + stats
+    def _wc(s): return len(re.findall(r"\b\w+\b", s or ""))
+    per_sec = [{"title": s["title"], "words": _wc(s.get("text","")), "paragraphs": len(s.get("paragraphs") or []), "chars": len(s.get("text",""))} for s in merged]
+    avg_words = int(round(sum(x["words"] for x in per_sec) / max(1, len(per_sec))))
+    avg_paras = float(sum(x["paragraphs"] for x in per_sec)) / max(1, len(per_sec))
+    total_words = sum(x["words"] for x in per_sec)
+
+    meta = {
+        "upstreamParams": {
+            "mode": "regen_partial_vm_outline",
+            "persona": persona,
+            "temp": float(req.temp or 0.0),
+            "top_p": float(req.top_p or 0.9),
+            "retriever": req.retriever,
+            "retriever_model": req.retriever_model,
+            "k": req.k,
+            "max_ctx_chars": req.max_ctx_chars,
+            "seg_words": req.seg_words,
+            "overlap_words": req.overlap_words,
+            "targets": sorted(list(targets)),
+        },
+        "stats": {
+            "per_section": per_sec,
+            "avg_words": avg_words,
+            "avg_paragraphs": round(avg_paras, 2),
+            "total_words": total_words,
+            "sections": len(merged),
+        }
+    }
+
+    return {"persona": persona, "title": (data.get("title") or title), "sections": merged, "meta": meta}

@@ -341,3 +341,78 @@ export async function regenerateAndUpdateStory(storyId, {
 
   return updateStory(storyId, patch);
 }
+
+// Rigenerazione parziale — chiama DIRETTAMENTE il FastAPI (/svc/api/regen_sections_vm)
+export async function regenerateSelectedSections(
+  _storyId,
+  {
+    text, persona, title, sections, targets,
+    temp = 0.0, top_p = 0.9,
+    retriever, retriever_model, k, max_ctx_chars, seg_words, overlap_words,
+  }
+) {
+  const url = `${API_BASE}/api/regen_sections_vm`;
+
+  // --- coercizioni robuste (evita undefined che spariscono nel JSON) ---
+  const safeText = String(text ?? "");
+  const safePersona = String(persona ?? "General Public");
+  const safeTitle = String(title ?? "Story");
+
+  const safeTargets = Array.isArray(targets)
+    ? targets.map(n => Number(n)).filter(n => Number.isFinite(n))
+    : [];
+
+  const safeSections = Array.isArray(sections) ? sections.map((s, i) => ({
+    id: s?.id ?? `sec-${i}`,
+    title: s?.title ?? `Section ${i + 1}`,
+    text: typeof s?.text === "string" ? s.text : (typeof s?.narrative === "string" ? s.narrative : ""),
+    paragraphs: Array.isArray(s?.paragraphs) ? s.paragraphs : [],
+    visible: s?.visible !== false,
+    hasImage: !!s?.hasImage,
+    description: s?.description ?? "",
+  })) : [];
+
+  const body = {
+    text: safeText,                 // REQUIRED
+    persona: safePersona,           // REQUIRED
+    title: safeTitle,
+    sections: safeSections,         // REQUIRED
+    targets: safeTargets,           // REQUIRED
+    temp: Number(temp),
+    top_p: Number(top_p),
+    ...(retriever        !== undefined ? { retriever } : {}),
+    ...(retriever_model  !== undefined ? { retriever_model } : {}),
+    ...(k                !== undefined ? { k } : {}),
+    ...(max_ctx_chars    !== undefined ? { max_ctx_chars } : {}),
+    ...(seg_words        !== undefined ? { seg_words } : {}),
+    ...(overlap_words    !== undefined ? { overlap_words } : {}),
+  };
+
+  // Log visibile sempre (Chrome mostra console.log anche in prod)
+  console.log("[regen_sections_vm] POST", url, { preview: {
+    text_len: body.text.length,
+    persona: body.persona,
+    title: body.title,
+    sections_len: body.sections.length,
+    targets: body.targets,
+    temp: body.temp,
+    top_p: body.top_p,
+  }});
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  const raw = await res.text().catch(() => "");
+  let data; try { data = raw ? JSON.parse(raw) : {}; } catch { data = { raw }; }
+
+  if (!res.ok) {
+    const msg =
+      (Array.isArray(data?.detail) ? data.detail.map(e => e?.msg || e).join(", ") : null) ||
+      data?.detail || data?.error || `HTTP ${res.status}`;
+    throw new Error(msg);
+  }
+  return data; // { persona, title, sections, meta }
+}

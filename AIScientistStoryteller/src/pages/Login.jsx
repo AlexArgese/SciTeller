@@ -83,7 +83,6 @@ export default function Login() {
         </div>
 
         <p className={styles.note}>
-          By continuing, you agree to our Terms and acknowledge our Privacy Policy.
         </p>
       </section>
     </main>

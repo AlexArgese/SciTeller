@@ -74,3 +74,11 @@
 }
 
 .pIndex { display: inline-block; font-size: var(--fs-small); font-weight: 700; color: var(--text-2); margin-right: .5em; }
+
+.sectionActive {
+  outline: 2px solid rgba(99, 102, 241, 0.6); 
+  border-radius: 10px;
+}
+section[aria-busy="true"] {
+  opacity: .85;
+}
