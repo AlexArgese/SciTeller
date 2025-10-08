@@ -91,7 +91,7 @@ export default function StoryView({
     return (
       <article>
         <h1 className={styles.title}>{storyTitle}</h1>
-        <p className={styles.empty}>Nessuna sezione disponibile.</p>
+        <p className={styles.empty}>No section available.</p>
       </article>
     );
   }
@@ -109,10 +109,10 @@ export default function StoryView({
             id={`section-${sec.id}`}
             data-section-id={sec.id}
             aria-busy={isBusy ? "true" : "false"}
-            className={`${styles.section} ${selectedSectionId === sec.id ? styles.sectionActive : ""}`}
+            className={`${styles.section}`}
             style={{ position: "relative" }}
             onClick={(e) => {
-              if (isBusy) return; // disabilita click mentre rigenera
+              if (isBusy) return;
               if (e.target?.tagName?.toLowerCase() === "p") return;
               onSelectSection?.(sec.id);
             }}
@@ -129,7 +129,6 @@ export default function StoryView({
             </h3>
 
             {isBusy ? (
-              // SOLO LOADER (nessun testo)
               <div
                 style={{
                   minHeight: 140,
@@ -145,6 +144,7 @@ export default function StoryView({
                   autoplay
                   style={{ width: 120, height: 120 }}
                 />
+                <p>Generating {sec.title}...</p>
               </div>
             ) : (
               <>

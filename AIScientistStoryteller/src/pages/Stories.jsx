@@ -243,58 +243,98 @@ export default function Stories(){
         return;
       }
     
-      // calcola targets (indici 0-based) a partire dagli ID selezionati
-      const sections = Array.isArray(st?.sections) ? st.sections : [];
-      const targets = idsToIndexes(sections, sectionIds);
+      const baseRevisionId = st?.current_revision_id || st?.defaultVersionId || null;
     
-      // spinner SOLO sulle sezioni selezionate (usa gli ID, come già fai nello StoryView)
-      setBusySectionIds(sectionIds);
-    
-      // costruisci il body richiesto dal FastAPI
-      const args = {
-        text: getPaperTextFromStory(st),
-        persona: st?.persona || st?.meta?.persona || "General Public",
-        title: st?.title || st?.docTitle || "Story",
-        sections,                      // array completo corrente
-        targets,                       // indici delle sezioni da rigenerare
-        temp: Number(patch?.temp ?? st?.meta?.upstreamParams?.temp ?? 0),
-        top_p: Number(st?.meta?.upstreamParams?.top_p ?? 0.9),
-        // se vuoi: retriever / k / ecc. (opzionali) → aggiungili qui
+      const upstream = st?.meta?.upstreamParams || {};
+      const knobs = {
+        temp: Number(patch?.temp ?? upstream?.temp ?? 0.0),
+        lengthPreset: String(patch?.lengthPreset || upstream?.lengthPreset || "medium"),
+        top_p: Number(upstream?.top_p ?? 0.9),
+        retriever: upstream?.retriever,
+        retriever_model: upstream?.retriever_model,
+        k: upstream?.k,
+        max_ctx_chars: upstream?.max_ctx_chars,
+        seg_words: upstream?.seg_words,
+        overlap_words: upstream?.overlap_words,
       };
     
       try {
-        // CHIAMA il backend FastAPI (usando la funzione già exportata dai services)
-        const updatedStoryShape = await regenerateSelectedSections(st.id, args);
-        // `updatedStoryShape` = { persona, title, sections, meta }
-    
-        // Salva come nuova revisione nel DB (PATCH /api/stories/:id)
-        const patchSave = {
-          title: st?.title || updatedStoryShape?.title || "Story",
-          persona: updatedStoryShape?.persona || args.persona,
-          sections: Array.isArray(updatedStoryShape?.sections) ? updatedStoryShape.sections : sections,
+        setBusySectionIds(sectionIds);
+      
+        // build input per FastAPI (diretto /svc)
+        const paperText = getPaperTextFromStory(st);
+        const targets   = idsToIndexes(st.sections || [], sectionIds);
+      
+        const updatedFromVm = await regenerateSelectedSections(st.id, {
+          text: paperText,
+          persona: st?.persona || "General Public",
+          title:   st?.title   || "Story",
+          sections: st?.sections || [],
+          targets,
+          temp: knobs.temp,
+          top_p: knobs.top_p,
+          lengthPreset: knobs.lengthPreset,
+          retriever: knobs.retriever,
+          retriever_model: knobs.retriever_model,
+          k: knobs.k,
+          max_ctx_chars: knobs.max_ctx_chars,
+          seg_words: knobs.seg_words,
+          overlap_words: knobs.overlap_words,
+        });
+      
+        const targetSet = new Set(targets);
+        const prevSections = Array.isArray(st.sections) ? st.sections : [];
+        const nextSections = (Array.isArray(updatedFromVm?.sections) ? updatedFromVm.sections : prevSections)
+          .map((sec, i) => {
+            const prev = prevSections[i] || {};
+            const base = { hasImage: !!(sec?.hasImage ?? prev?.hasImage), visible: (sec?.visible ?? (prev?.visible !== false)) };
+            if (targetSet.has(i)) {
+              return {
+                ...prev,
+                ...sec,
+                id: prev.id ?? sec.id,      
+                ...base,
+                temp: knobs.temp,
+                lengthPreset: knobs.lengthPreset,
+              };
+            }
+            return {
+              ...prev,
+              ...sec,
+              id: prev.id ?? sec.id,        
+              ...base,
+              temp: (typeof prev?.temp === "number" ? prev.temp : undefined),
+              lengthPreset: (prev?.lengthPreset || undefined),
+            };
+          });
+      
+        await updateStory(st.id, {
+          title: st?.title || updatedFromVm?.title || "Story",
+          persona: updatedFromVm?.persona || st?.persona || "General Public",
+          sections: nextSections,
           meta: {
             ...(st?.meta || {}),
-            ...(updatedStoryShape?.meta || {}),
+            ...(updatedFromVm?.meta || {}),
             upstreamParams: {
-              ...(updatedStoryShape?.meta?.upstreamParams || {}),
+              ...(st?.meta?.upstreamParams || {}),
               mode: "regen_partial_vm",
-              temp: args.temp,
-              top_p: args.top_p,
-              lengthPreset: String(patch?.lengthPreset || st?.meta?.upstreamParams?.lengthPreset || "medium"),
+              temp: knobs.temp,
+              top_p: knobs.top_p,
+              lengthPreset: knobs.lengthPreset,
               targets,
             },
+            ...(patch?.notes ? { notes: patch.notes } : {}),
           },
-          baseRevisionId: st?.current_revision_id || null,
-        };
-    
-        const saved = await updateStory(st.id, patchSave);
-    
-        // ricarica timeline versioni
+          baseRevisionId,
+        });
+
+        const full = await getStory(st.id);
         let versions = [];
         try { versions = await getRevisions(st.id); } catch {}
-        const withVersions = { ...saved, versions, defaultVersionId: saved?.current_revision_id || null };
-    
+        const withVersions = { ...full, versions, defaultVersionId: full?.current_revision_id || null };
+
         setStories(prev => prev.map(s => (s.id === withVersions.id ? withVersions : s)));
+
         setCpStage("default");
         setSelectedParagraph(null);
         setSelectedSectionId(null);
@@ -303,7 +343,7 @@ export default function Stories(){
         alert(err?.message || "Error during section regeneration.");
       } finally {
         setBusySectionIds([]);
-      }
+      }         
       return;
     }    
 
@@ -321,54 +361,6 @@ export default function Stories(){
       setStories(prev => prev.map(s => (s.id === withVersions.id ? withVersions : s)));
     } finally {
       setLoading(false);
-    }
-  }
-
-  async function handleRegenSelectedSection() {
-    const st = selectedStory;
-    if (!st) return;
-    if (!selectedSectionId) {
-      alert("First select a section to regenerate.");
-      return;
-    }
-  
-    const sectionId = selectedSectionId;
-    const baseRevisionId = st?.current_revision_id || st?.defaultVersionId || null;
-  
-    const upstream = st?.meta?.upstreamParams || {};
-    const knobs = {
-      temp: Number(upstream?.temp ?? 0.0),
-      lengthPreset: String(upstream?.lengthPreset || "medium"),
-      top_p: Number(upstream?.top_p ?? 0.9),
-      retriever: upstream?.retriever,
-      retriever_model: upstream?.retriever_model,
-      k: upstream?.k,
-      max_ctx_chars: upstream?.max_ctx_chars,
-      seg_words: upstream?.seg_words,
-      overlap_words: upstream?.overlap_words,
-    };
-  
-    try {
-      // 👇 niente overlay globale, solo spinner sulla sezione
-      setBusySectionIds([sectionId]);
-  
-      const updated = await regenerateSelectedSections(st.id, {
-        sectionIds: [sectionId],
-        baseRevisionId,
-        notes: "",
-        ...knobs,
-      });
-  
-      let versions = [];
-      try { versions = await getRevisions(st.id); } catch {}
-      const withVersions = { ...updated, versions, defaultVersionId: updated?.current_revision_id || null };
-      setStories(prev => prev.map(s => (s.id === withVersions.id ? withVersions : s)));
-      setSelectedSectionId(null);
-    } catch (err) {
-      console.error(err);
-      alert(err?.message || "Error during section regeneration.");
-    } finally {
-      setBusySectionIds([]);
     }
   }
   
@@ -573,16 +565,6 @@ export default function Stories(){
             {openCP ? "›" : "‹"}
           </button>
 
-          {selectedSectionId && (
-            <button
-              style={{ position:"absolute", right: 20, bottom: 20, zIndex: 2 }}
-              onClick={handleRegenSelectedSection}
-              title="Rigenera solo questa sezione (mantiene le altre)"
-            >
-              Rigenera sezione
-            </button>
-          )}
-
           <ControlPanel
             open={openCP}
             story={selectedStory}
@@ -594,6 +576,7 @@ export default function Stories(){
             onChange={handleUpdate}
             onChangeSections={(next) => handleUpdate({ sections: next })}
             onJumpToSection={handleScrollToSection}
+            onClosePanel={() => setOpenCP(false)}
           />
         </>
       )}

@@ -126,25 +126,46 @@ export async function POST(req) {
     const title = s?.title || "Story";
     const cleaned_text = baseRev?.meta?.paperText || buildCleanedText(baseSections);
 
-    const eff = (k, d) => (knobs[k] != null ? knobs[k] : (baseRev?.meta?.upstreamParams?.[k] ?? d));
-    const temp  = Number(eff("temp", 0.0));
-    const top_p = Number(eff("top_p", 0.9));
-    const lengthPreset = String(eff("lengthPreset", "medium"));
+    const bodyTop = body || {};
+    const up = (baseRev?.meta?.upstreamParams) || {};
 
+    const temp = Number(
+        bodyTop.temp ??
+        knobs.temp ??
+        up.temp ??
+        0.0
+    );
+
+    const top_p = Number(
+        bodyTop.top_p ??
+        knobs.top_p ??
+        up.top_p ??
+        0.9
+    );
+
+    const lengthPreset = String(
+        bodyTop.length_preset ??
+        knobs.lengthPreset ??
+        up.lengthPreset ??
+        "medium"
+    );
+
+    // costruiamo il payload per la VM con i valori effettivi
     const vmBody = {
-      text: cleaned_text,
-      persona,
-      title,
-      sections: baseSections,   // VM usa title/description per i target, preserva gli altri
-      targets,
-      temp,
-      top_p,
-      retriever:        eff("retriever", undefined),
-      retriever_model:  eff("retriever_model", undefined),
-      k:                eff("k", undefined),
-      max_ctx_chars:    eff("max_ctx_chars", undefined),
-      seg_words:        eff("seg_words", undefined),
-      overlap_words:    eff("overlap_words", undefined),
+        text: cleaned_text,
+        persona,
+        title,
+        sections: baseSections,
+        targets,
+        temp,
+        top_p,
+        length_preset: lengthPreset,
+        retriever:        (bodyTop.retriever ?? knobs.retriever ?? up.retriever),
+        retriever_model:  (bodyTop.retriever_model ?? knobs.retriever_model ?? up.retriever_model),
+        k:                (bodyTop.k ?? knobs.k ?? up.k),
+        max_ctx_chars:    (bodyTop.max_ctx_chars ?? knobs.max_ctx_chars ?? up.max_ctx_chars),
+        seg_words:        (bodyTop.seg_words ?? knobs.seg_words ?? up.seg_words),
+        overlap_words:    (bodyTop.overlap_words ?? knobs.overlap_words ?? up.overlap_words),
     };
 
     // 4) call VM
@@ -163,24 +184,52 @@ export async function POST(req) {
 
     const newSections = Array.isArray(vmData.sections) ? vmData.sections : baseSections;
 
-    // 5) build meta & insert new revision (branching da baseRevisionId)
-    const mergedMeta = {
-      ...(baseRev?.meta || {}),
-      upstreamParams: {
-        ...(baseRev?.meta?.upstreamParams || {}),
-        temp, top_p, lengthPreset,
-        retriever: vmBody.retriever,
-        retriever_model: vmBody.retriever_model,
-        k: vmBody.k, max_ctx_chars: vmBody.max_ctx_chars,
-        seg_words: vmBody.seg_words, overlap_words: vmBody.overlap_words,
-        targets,
+    const targetsSet = new Set(targets || []);
+    const usedTemp   = (typeof temp === "number") ? temp : 0.5;
+    const usedPreset = String(lengthPreset || "medium");
+
+    const stampedSections = newSections.map((sec, i) => {
+    if (targetsSet.has(i)) {
+        return {
+        ...sec,
+        temp: usedTemp,          
+        lengthPreset: usedPreset,  
+        };
+    }
+    return { ...sec };
+    });
+
+
+    const prevUpstream = (baseRev?.meta?.upstreamParams) || {};
+
+    const upstreamParams = {
+        ...prevUpstream,
+        temp,
+        top_p,
+        lengthPreset,
+        retriever:       vmBody.retriever       ?? prevUpstream.retriever,
+        retriever_model: vmBody.retriever_model ?? prevUpstream.retriever_model,
+        k:               vmBody.k               ?? prevUpstream.k,
+        max_ctx_chars:   vmBody.max_ctx_chars   ?? prevUpstream.max_ctx_chars,
+        seg_words:       vmBody.seg_words       ?? prevUpstream.seg_words,
+        overlap_words:   vmBody.overlap_words   ?? prevUpstream.overlap_words,
         mode: "regen_partial_vm",
-      },
-      ...(notes ? { notes } : {}),
-      ...(baseRev?.id ? { parentRevisionId: baseRev.id } : {}),
+        targets,
+      };
+
+    const mergedMeta = {
+        ...(baseRev?.meta || {}),
+        upstreamParams, 
+        lastPartialRegen: {
+            temp, top_p, lengthPreset, targets,
+            at: new Date().toISOString(),
+        },
+        ...(notes ? { notes } : {}),
+        ...(baseRev?.id ? { parentRevisionId: baseRev.id } : {}),
     };
 
-    const content = { sections: newSections };
+
+    const content = { sections: stampedSections };
     const [inserted] = await db.insert(storyRevisions).values({
       id: randomUUID(),
       storyId: s.id,

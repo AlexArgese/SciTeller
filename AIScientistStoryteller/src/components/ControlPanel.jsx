@@ -10,28 +10,27 @@ export default function ControlPanel({
   onReadOnPaper,
   onChange,
   onJumpToSection,
+  onClosePanel,
 }) {
   const [scope, setScope] = useState("story"); // story | sections | paragraph
   useEffect(() => { setScope("story"); }, [story?.id]);
 
-  // === BLOB PATCH: costanti condivise con la navbar (in alto, vicino alle altre const)
-  const PILL_PAD = 12;        // padding orizzontale della pill
-  const MIN_W_SAFE = 40;      // fallback se non abbiamo ancora l'altezza
-  const SUSPICIOUS_W = 6;     // misura testo troppo piccola → retry
-  const MAX_RETRY = 6;        // numero massimo di tentativi su RAF
-  /* ================== REFS + MISURE ================== */
+  const PILL_PAD = 12;   
+  const MIN_W_SAFE = 40;  
+  const SUSPICIOUS_W = 6;  
+  const MAX_RETRY = 6;     
+
   // Scope indicator (Story/Sections/Paragraph)
   const scopeTabsRef = useRef(null);
   const scopeIndicatorRef = useRef(null);
   const scopePosRef = useRef({ x: 0, w: 0 });
-  const [scopeReady, setScopeReady] = useState(false); // === BLOB PATCH
+  const [scopeReady, setScopeReady] = useState(false); 
 
   // Tabs indicator (Modify/Info/Versions/Export)
   const tabsRef = useRef(null);
   const indicatorRef = useRef(null);
   const posRef = useRef({ x: 0, w: 0 });
-  const [cpReady, setCpReady] = useState(false); // === BLOB PATCH
-  // === BLOB PATCH: misuratori robusti (identici alla navbar, con padding e clamp)
+  const [cpReady, setCpReady] = useState(false);
 
   const measureGeneric = (host, activeSel, labelSel, indicatorEl) => {
     if (!host || !indicatorEl) return null;
@@ -126,7 +125,11 @@ export default function ControlPanel({
     return out;
   }
 
-  // specifici
+  function findSectionById(sections, id) {
+    const byId = new Map((sections||[]).map((s,i)=>[ String(s?.id ?? s?.sectionId ?? i), s ]));
+    return byId.get(String(id)) || null;
+  }  
+
   const measureScopeTarget = () => {
     return measureGeneric(
       scopeTabsRef.current,
@@ -187,6 +190,27 @@ export default function ControlPanel({
     requestAnimationFrame(() => requestAnimationFrame(tryPlace));
   };
 
+  function cap(s){ return (String(s||"").charAt(0).toUpperCase() + String(s||"").slice(1)); }
+  function summarizeLastPartialRegen(story){
+    const lpr = story?.meta?.lastPartialRegen;
+    if (!lpr) return null;
+
+    const secs = Array.isArray(story?.sections) ? story.sections : [];
+    const secCount = secs.length;
+
+    // targets sono indici 0-based salvati dal server
+    const idxs = (lpr.targets || [])
+      .map(n => Number(n))
+      .filter(n => Number.isInteger(n) && n >= 0 && n < secCount);
+
+    const names = idxs.map(i => secs[i]?.title?.trim() || `Section ${i+1}`);
+    return {
+      preset: String(lpr.lengthPreset || "medium"),
+      temp: Number(lpr.temp ?? 0),
+      sections: names,
+      at: lpr.at ? new Date(lpr.at) : null,
+    };
+  }
 
   /* ================== INIT POSIZIONE (no animazione) ================== */
   // Scope indicator — init dopo il primo paint stabile
@@ -344,9 +368,13 @@ export default function ControlPanel({
 
   /* ================== STATO ESISTENTE (invariato) ================== */
   const sections = useMemo(() => Array.isArray(story?.sections) ? story.sections : [], [story]);
+  const defaultsForInfo = useMemo(() => defaultKnobsFromMeta(story?.meta), [story?.id, story?.meta]);
+  const aggForInfo = useMemo(() => aggregateStoryKnobs(sections, defaultsForInfo), [sections, defaultsForInfo]);
   const personaDefault = story?.persona || story?.meta?.persona || "Student";
   const tempDefault = getCreativity(story?.meta);           // 0..1
   const lengthPresetDefault = getLengthPreset(story?.meta);  // "short|medium|long"
+
+
 
   
   const lpFromMeta = story?.meta?.upstreamParams?.lengthPreset;
@@ -360,6 +388,21 @@ export default function ControlPanel({
 
   const [selectedSectionIds, setSelectedSectionIds] = useState([]);
   const [sectionTemp, setSectionTemp] = useState(storyTemp);
+
+  useEffect(() => {
+    const secs = Array.isArray(sections) ? sections : [];
+    if (selectedSectionIds.length === 1) {
+      const sel = findSectionById(secs, selectedSectionIds[0]);
+      const effLen = (sel?.lengthPreset) || (story?.meta?.upstreamParams?.lengthPreset) || "medium";
+      const effTmp = (typeof sel?.temp === "number") ? sel.temp : (Number(tempDefault) || 0);
+      setLengthPreset(String(effLen));
+      setSectionTemp(Number(effTmp));
+    } else {
+      const lp = story?.meta?.upstreamParams?.lengthPreset || "medium";
+      setLengthPreset(lp);
+      setSectionTemp(Number(tempDefault) || 0);
+    }
+  }, [selectedSectionIds, story?.id, sections.length, tempDefault]);  
 
   useEffect(() => {
     setStoryPersona(personaDefault);
@@ -392,15 +435,28 @@ export default function ControlPanel({
     if (!action) return `Update "${title}".`;
     if (action.type === "story") {
       const lp = action.payload.lengthPreset || "medium";
-      return `Regenerate ENTIRE story "${title}" as persona ${action.payload.persona}, temp=${action.payload.temp}, length=${lp}.`;
+      return `Regenerate ENTIRE story "${title}" as persona ${action.payload.persona}, creativity = ${action.payload.temp * 100}% and length per section = ${lp}.`;
     }    
     if (action.type === "sections") {
       const names = action.payload.sectionIds.map(id=>{
         const s = sections.find(ss => (ss.id ?? ss.sectionId ?? "") === id);
         return s?.title || `Section ${id}`;
       }).join(", ");
-      return `Regenerate SECTIONS (${names}) with temp=${action.payload.temp}, preset=${action.payload.lengthPreset}.`;
-    }
+    
+      // knobs passati dal pannello (già coerenti quando più sezioni)
+      let effTemp = action.payload.temp;
+      let effLP   = action.payload.lengthPreset;
+    
+      // se UNA sola sezione, prova a leggere override per-sezione
+      if (action.payload.sectionIds.length === 1) {
+        const sel = findSectionById(sections, action.payload.sectionIds[0]);
+        if (typeof sel?.temp === "number") effTemp = sel.temp;
+        if (sel?.lengthPreset) effLP = sel.lengthPreset;
+      }
+    
+      const tempStr = Number.isFinite(effTemp) ? effTemp.toFixed(2) : String(effTemp ?? "-");
+      return `Regenerate SECTIONS (${names}) with creativity = ${tempStr * 100}% and length per section = ${effLP}.`;
+    }    
     if (action.type === "paragraph" && selectedParagraph) {
       const s = sections.find(ss => (ss.id ?? ss.sectionId) === selectedParagraph.sectionId);
       const secName = s?.title || "Selected section";
@@ -443,6 +499,7 @@ export default function ControlPanel({
       });
       setPendingAction(null);
       setNotes("");
+      onClosePanel?.();
       return;
     }
 
@@ -456,6 +513,7 @@ export default function ControlPanel({
     };
     await onChange(payload);
     setPendingAction(null);
+    onClosePanel?.();
     setNotes("");
   }
 
@@ -514,9 +572,61 @@ export default function ControlPanel({
     if (typeof meta?.creativity === "number") return Number(meta.creativity) / 100; // explain: 0..100
     return 0.0;
   }
-    
-  /* ---------- RENDER ---------- */
 
+  function defaultKnobsFromMeta(meta){
+    const up = meta?.upstreamParams || {};
+    return {
+      lengthPreset: String(up.lengthPreset || "medium"),
+      temp: Number(up.temp ?? 0.5),
+    };
+  }
+
+  function sectionKnobs(section, defaults){
+    const temp = (typeof section?.temp === "number") ? section.temp : defaults.temp;
+    const lengthPreset = section?.lengthPreset || defaults.lengthPreset;
+    return { temp, lengthPreset };
+  }
+
+  function aggregateStoryKnobs(sections, defaults){
+    const items = (sections || [])
+      .filter(s => s?.visible !== false)
+      .map(s => sectionKnobs(s, defaults));
+
+    const temps = items.map(i => i.temp).filter(n => Number.isFinite(n));
+    const avgTemp = temps.length ? (temps.reduce((a,b)=>a+b,0) / temps.length) : defaults.temp;
+
+    const lengths = items.map(i => i.lengthPreset).filter(Boolean);
+    const uniq = Array.from(new Set(lengths));
+    const aggLength = (uniq.length === 1) ? uniq[0] : "mix";
+
+    return { temp: avgTemp, lengthPreset: aggLength };
+  }
+
+  function computeStoryAggregates(story, fallbackLength, fallbackTemp){
+    const sectionsAll = Array.isArray(story?.sections) ? story.sections : [];
+    const sections = sectionsAll.filter(s => s?.visible !== false);
+  
+    const baseLP   = fallbackLength || "medium";
+    const baseTemp = Number(fallbackTemp ?? 0) || 0;
+  
+    // length preset effettivo per sezione (override → fallback)
+    const effLPs = sections.map(s => (s?.lengthPreset || baseLP));
+    const allSameLP = effLPs.length > 0 ? effLPs.every(lp => lp === effLPs[0]) : true;
+    const lengthLabel = effLPs.length === 0
+      ? baseLP.replace(/^\w/, c => c.toUpperCase())
+      : (allSameLP
+          ? effLPs[0].replace(/^\w/, c => c.toUpperCase())
+          : "Mix");
+  
+    // creatività media (usa s.temp se presente, altrimenti baseTemp)
+    const temps = sections.map(s => (typeof s?.temp === "number" ? s.temp : baseTemp))
+                          .filter(t => Number.isFinite(t));
+    const avgTemp = temps.length ? (temps.reduce((a,b)=>a+b,0) / temps.length) : baseTemp;
+  
+    return { lengthLabel, avgTemp };
+  }  
+  
+  /* ---------- RENDER ---------- */
 
   if (cpStage === "notes" && pendingAction) {
     return (
@@ -599,7 +709,7 @@ export default function ControlPanel({
           {/* STORY */}
           {scope==="story" && (
             <div className={`${styles.section} ${styles.blueCard}`}>
-              <div className={styles.formGrid}>
+              <div className={styles.formGrid} style={{marginTop: 0}}>
                 <div>
                   <div className={styles.fieldRow}>
                     <label className={styles.label}>Length per section</label>
@@ -664,12 +774,7 @@ export default function ControlPanel({
           {scope==="sections" && (
             <div className={`${styles.section} ${styles.blueCard}`}>
               <div className={styles.fieldRow}>
-                <label className={styles.labelBig}>Show sections</label>
-              </div>
-
-              <div className={styles.sectionsToolbar}>
-                <button className={styles.ghostBtn} onClick={selectAllSections}>Select all</button>
-                <button className={styles.ghostBtn} onClick={clearSections}>Clear</button>
+                <label className={styles.label}>Choose one or more sections</label>
               </div>
 
               <div className={styles.sectionsList}>
@@ -853,12 +958,39 @@ export default function ControlPanel({
                   <div className={styles.kv}><div>Persona</div>
                     <div className={styles.kvVal}>{personaDefault}</div>
                   </div>
-                  <div className={styles.kv}><div>Target length</div>
-                    <div className={styles.kvVal}>{lengthPresetDefault.replace(/^\w/, c => c.toUpperCase())}</div>
-                  </div>
-                  <div className={styles.kv}><div>Creativity</div>
-                    <div className={styles.kvVal}>{Math.round((tempDefault || 0)*100)}%</div>
-                  </div>
+                  {(() => {
+                    const { lengthLabel, avgTemp } = computeStoryAggregates(
+                      story,
+                      lengthPresetDefault,
+                      tempDefault
+                    );
+                    return (
+                      <>
+                        <div className={styles.kv}><div>Target length</div>
+                          <div className={styles.kvVal}>{lengthLabel}</div>
+                        </div>
+                        <div className={styles.kv}><div>Creativity</div>
+                          <div className={styles.kvVal}>{Math.round((avgTemp || 0) * 100)}%</div>
+                        </div>
+                      </>
+                    );
+                  })()}
+                  {(() => {
+                    const last = summarizeLastPartialRegen(story);
+                    if (!last) return null;
+                    const tempPct = isFinite(last.temp) ? Math.round(last.temp * 100) : null;
+                    const when = last.at ? last.at.toLocaleString() : null;
+                    return (
+                      <div className={styles.kv}>
+                        <div>Last partial regen</div>
+                        <div className={styles.kvVal}>
+                          {cap(last.preset)} @ {isFinite(last.temp) ? last.temp.toFixed(2) : "-"}
+                          {tempPct != null ? ` (${tempPct}%)` : ""} · {last.sections.join(", ")}
+                          {when ? ` — ${when}` : ""}
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </>
               )}
             </div>
@@ -888,12 +1020,17 @@ export default function ControlPanel({
                             </button>
                             {s.description && <div className={styles.secDesc}>{s.description}</div>}
                           </div>
-                          <div className={styles.secRight}>
-                            <div className={styles.kvs}><span>Creativity:</span><b>{fmt(s?.temp ?? tempDefault)}</b></div>
-                            <div className={styles.kvs}><span>Length:</span>
-                              <b>{(s?.lengthPreset || lengthPresetDefault).replace(/^\w/, c => c.toUpperCase())}</b>
-                            </div>
-                          </div>
+                          {(() => {
+                            const k = sectionKnobs(s, defaultsForInfo);
+                            return (
+                              <>
+                                <div className={styles.kvs}><span>Creativity:</span><b>{fmt(k.temp)}</b></div>
+                                <div className={styles.kvs}><span>Length:</span>
+                                  <b>{String(k.lengthPreset).replace(/^\w/, c => c.toUpperCase())}</b>
+                                </div>
+                              </>
+                            );
+                          })()}
                         </li>
                       );
                     })}
@@ -1023,7 +1160,17 @@ export default function ControlPanel({
 function clamp01(x){ x = Number(x)||0; return Math.min(1, Math.max(0, x)); }
 function clampN(n){ return Math.min(3, Math.max(1, Number(n)||1)); }
 function fmt(x){ const n = Number(x); return isFinite(n) ? n.toFixed(2) : String(x ?? "-"); }
-function findSectionTitle(sections, id){ const s=sections.find(ss=>(ss.id??ss.sectionId)===id); return s?.title || "Section"; }
+function findSectionTitle(sections, id){
+  const key = String(id);
+  const s = (sections||[]).find(ss => String(ss.id ?? ss.sectionId) === key);
+  return s?.title || "Section";
+}
+function findSectionById(sections, id){
+  const key = String(id);
+  const byId = new Map((sections||[]).map((s,i)=>[ String(s?.id ?? s?.sectionId ?? i), s ]));
+  return byId.get(key) || null;
+}
+
 function mapActionToCommand(action){
   if (!action) return "update";
   if (action.type === "story")     return "regenerate_story";

@@ -241,6 +241,7 @@ class RegenSectionsVmReq(BaseModel):
     targets: List[int]                        # indici da rigenerare (es: [0,2]), oppure passa titles se preferisci
     temp: float = 0.0
     top_p: float = 0.9
+    length_preset: Optional[str] = None
     # retrieval opzionali
     retriever: Optional[str] = None
     retriever_model: Optional[str] = None
@@ -627,6 +628,10 @@ def regen_sections_vm(req: RegenSectionsVmReq):
     sections = req.sections or []
     targets  = set(int(i) for i in (req.targets or []) if isinstance(i, int))
 
+    lp = resolve_length_params(req.length_preset or "medium", words=None)
+
+    print(f"[/api/regen_sections_vm] length_preset IN = {req.length_preset!r} → resolved {lp}")
+
     # 1) Costruisci l'outline completo (title + description)
     def _desc_from(sec: dict) -> str:
         # usa description se c'è, altrimenti la prima frase/testo breve
@@ -655,9 +660,12 @@ def regen_sections_vm(req: RegenSectionsVmReq):
         "cleaned_text": text,
         "outline": outline,
         "storyteller": {
-            "preset": "medium",
+            "preset": lp["preset"],
             "temperature": float(req.temp or 0.0),
             "top_p": float(req.top_p or 0.9),
+            "max_new_tokens": lp["max_new_tokens"],
+            "min_new_tokens": lp["min_new_tokens"],
+            "target_words": lp["target_words"],
             **({ "retriever": req.retriever } if req.retriever is not None else {}),
             **({ "retriever_model": req.retriever_model } if req.retriever_model is not None else {}),
             **({ "k": int(req.k) } if req.k is not None else {}),
@@ -718,6 +726,7 @@ def regen_sections_vm(req: RegenSectionsVmReq):
             "persona": persona,
             "temp": float(req.temp or 0.0),
             "top_p": float(req.top_p or 0.9),
+            "lengthPreset": lp["preset"],
             "retriever": req.retriever,
             "retriever_model": req.retriever_model,
             "k": req.k,

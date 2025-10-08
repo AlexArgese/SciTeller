@@ -347,7 +347,7 @@ export async function regenerateSelectedSections(
   _storyId,
   {
     text, persona, title, sections, targets,
-    temp = 0.0, top_p = 0.9,
+    temp = 0.0, top_p = 0.9, lengthPreset,
     retriever, retriever_model, k, max_ctx_chars, seg_words, overlap_words,
   }
 ) {
@@ -373,13 +373,19 @@ export async function regenerateSelectedSections(
   })) : [];
 
   const body = {
-    text: safeText,                 // REQUIRED
-    persona: safePersona,           // REQUIRED
+    text: safeText,              
+    persona: safePersona,      
     title: safeTitle,
-    sections: safeSections,         // REQUIRED
-    targets: safeTargets,           // REQUIRED
+    sections: safeSections,    
+    targets: safeTargets,     
     temp: Number(temp),
     top_p: Number(top_p),
+    length_preset: String(lengthPreset || "medium"),
+    knobs: {
+      temp: Number(temp),
+      top_p: Number(top_p),
+      lengthPreset: String(lengthPreset || "medium"),
+    },
     ...(retriever        !== undefined ? { retriever } : {}),
     ...(retriever_model  !== undefined ? { retriever_model } : {}),
     ...(k                !== undefined ? { k } : {}),
@@ -397,6 +403,7 @@ export async function regenerateSelectedSections(
     targets: body.targets,
     temp: body.temp,
     top_p: body.top_p,
+    length_preset: body.length_preset,
   }});
 
   const res = await fetch(url, {

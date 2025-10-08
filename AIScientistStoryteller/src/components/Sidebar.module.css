@@ -50,7 +50,8 @@
   backdrop-filter: blur(4px);
   cursor: pointer;
   transition: background var(--dur-2) var(--ease-emph), border-color var(--dur-2) var(--ease-emph);
-  box-shadow: var(--glass-item-sd)
+  box-shadow: var(--glass-item-sd);
+  height: 2.5em;
 }
 .item:hover {  background: color-mix(in oklab, var(--accent) 49%, rgba(255,255,255,.62)); }
 

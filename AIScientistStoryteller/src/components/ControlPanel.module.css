@@ -211,10 +211,10 @@
   width: 100%;
 }
 
-.formGrid{ display: grid; gap: var(--sp-5); }
+.formGrid{ display: grid; gap: var(--sp-5); margin-top: 2em;}
 .fieldRow{ display: grid; grid-template-columns: 1fr auto;  }
 .valueRight{ color: var(--text-2); font-weight: 700; text-align: justify;}
-.label, .labelBig{ font-weight: 700; color: var(--heading); }
+.label, .labelBig{ font-weight: 700; color: var(--heading); margin-bottom: 1em;}
 .labelBig{ font-size: 15px; }
 .range{ accent-color: color-mix(in oklab, var(--accent) 90%, #556 10%); width: 100%;}
 .changePersona{ display: flex; flex-direction: column; }
@@ -258,7 +258,6 @@
   align-items: center;
   padding: 8px 10px;
   border-radius: 12px;
-  border: 1px solid var(--glass-line);
   background: rgba(255,255,255,.58);
   -webkit-backdrop-filter: blur(4px);
   backdrop-filter: blur(4px);
@@ -632,9 +631,9 @@
 
 /* Misc */
 .actionsSticky{
-  display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: var(--sp-5);
+  display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: var(--sp-8); margin-bottom: var(--sp-8);
 }
-.noteInfo{ color: var(--text-2); }
+.noteInfo{ color: var(--text-2); font-size: small; }
 .muted{ color: var(--text-2); }
 .ticks3{
   display:flex; justify-content:space-between; font-size:12px; color:var(--text-2);
