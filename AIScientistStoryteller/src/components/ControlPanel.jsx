@@ -453,9 +453,10 @@ export default function ControlPanel({
         if (typeof sel?.temp === "number") effTemp = sel.temp;
         if (sel?.lengthPreset) effLP = sel.lengthPreset;
       }
-    
-      const tempStr = Number.isFinite(effTemp) ? effTemp.toFixed(2) : String(effTemp ?? "-");
-      return `Regenerate SECTIONS (${names}) with creativity = ${tempStr * 100}% and length per section = ${effLP}.`;
+
+      // ✅ FIX: percentuale come numero reale (non su stringa)
+      const tempPct = Number.isFinite(effTemp) ? Math.round(effTemp * 100) : null;
+      return `Regenerate SECTIONS (${names}) with creativity = ${tempPct != null ? tempPct + "%" : "-"} and length per section = ${effLP}.`;
     }    
     if (action.type === "paragraph" && selectedParagraph) {
       const s = sections.find(ss => (ss.id ?? ss.sectionId) === selectedParagraph.sectionId);
@@ -602,27 +603,40 @@ export default function ControlPanel({
     return { temp: avgTemp, lengthPreset: aggLength };
   }
 
+  // ✅ FIX ROBUSTEZZA: gli aggregati “Info → Story” ignorano i fallback globali
+  // quando calcolano le medie/etichette, così la rigenerazione parziale non
+  // inquina i valori globali. Usiamo solo override espliciti; se assenti, fallback.
   function computeStoryAggregates(story, fallbackLength, fallbackTemp){
     const sectionsAll = Array.isArray(story?.sections) ? story.sections : [];
     const sections = sectionsAll.filter(s => s?.visible !== false);
-  
+
     const baseLP   = fallbackLength || "medium";
     const baseTemp = Number(fallbackTemp ?? 0) || 0;
-  
-    // length preset effettivo per sezione (override → fallback)
-    const effLPs = sections.map(s => (s?.lengthPreset || baseLP));
-    const allSameLP = effLPs.length > 0 ? effLPs.every(lp => lp === effLPs[0]) : true;
-    const lengthLabel = effLPs.length === 0
-      ? baseLP.replace(/^\w/, c => c.toUpperCase())
-      : (allSameLP
-          ? effLPs[0].replace(/^\w/, c => c.toUpperCase())
-          : "Mix");
-  
-    // creatività media (usa s.temp se presente, altrimenti baseTemp)
-    const temps = sections.map(s => (typeof s?.temp === "number" ? s.temp : baseTemp))
-                          .filter(t => Number.isFinite(t));
-    const avgTemp = temps.length ? (temps.reduce((a,b)=>a+b,0) / temps.length) : baseTemp;
-  
+
+    // length preset: usa SOLO override espliciti; se nessuno, fallback
+    const explicitLPs = sections
+      .map(s => s?.lengthPreset)
+      .filter(lp => typeof lp === "string" && lp.trim().length > 0);
+
+    let lengthLabel;
+    if (explicitLPs.length === 0) {
+      lengthLabel = baseLP.replace(/^\w/, c => c.toUpperCase());
+    } else {
+      const allSame = explicitLPs.every(lp => lp === explicitLPs[0]);
+      lengthLabel = allSame
+        ? explicitLPs[0].replace(/^\w/, c => c.toUpperCase())
+        : "Mix";
+    }
+
+    // creatività media: usa SOLO s.temp espliciti; se nessuno, fallback
+    const explicitTemps = sections
+      .map(s => (typeof s?.temp === "number" ? s.temp : undefined))
+      .filter(t => Number.isFinite(t));
+
+    const avgTemp = explicitTemps.length
+      ? (explicitTemps.reduce((a,b)=>a+b,0) / explicitTemps.length)
+      : baseTemp;
+
     return { lengthLabel, avgTemp };
   }  
   

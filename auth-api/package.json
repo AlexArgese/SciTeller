@@ -17,7 +17,8 @@
         "next-auth": "beta",
         "postgres": "^3.4.4",
         "react": "18.2.0",
-        "react-dom": "18.2.0"
+        "react-dom": "18.2.0",
+        "undici": "^6.19.8"
     },
     "devDependencies": {
         "dotenv": "^17.2.2",

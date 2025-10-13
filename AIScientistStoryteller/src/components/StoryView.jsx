@@ -48,7 +48,7 @@ export default function StoryView({
     story.paper_title ||
     "Title Story";
 
-  const busySet = useMemo(() => new Set(busySectionIds || []), [busySectionIds]);
+  const busySet = useMemo(() => new Set((busySectionIds || []).map(String)), [busySectionIds]);
 
   // Sezioni visibili normalizzate (id, paragraphs)
   const sections = useMemo(() => {

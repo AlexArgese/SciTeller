@@ -22,11 +22,13 @@ export async function explainPdf({ file, persona, options = {} }) {
   if (options.limit_sections != null) fd.append("limit_sections", String(options.limit_sections));
   if (options.temp != null) fd.append("temp", String(options.temp));
   if (options.top_p != null) fd.append("top_p", String(options.top_p));
-  if (options.title_style) fd.append("title_style", options.title_style);
-  if (options.title_max_words != null) fd.append("title_max_words", String(options.title_max_words));
   if (options.preset) fd.append("preset", options.preset);
   if (options.k != null) fd.append("k", String(options.k));
   if (options.max_ctx_chars != null) fd.append("max_ctx_chars", String(options.max_ctx_chars));
+  if (options.retriever) fd.append("retriever", options.retriever);
+  if (options.retriever_model) fd.append("retriever_model", options.retriever_model);
+  if (options.seg_words != null) fd.append("seg_words", String(options.seg_words));
+  if (options.overlap_words != null) fd.append("overlap_words", String(options.overlap_words));
 
   const url = `${API_BASE}/api/explain`;
   console.debug("[explainPdf] POST", url, { persona, hasFile: !!file, options });

@@ -1,3 +1,4 @@
+// FILE: AIScientistStoryteller/src/pages/Stories.jsx
 import { useEffect, useMemo, useState, useRef } from "react";
 import Sidebar from "../components/Sidebar.jsx";
 import StoryView from "../components/StoryView.jsx";
@@ -236,15 +237,17 @@ export default function Stories(){
     if (patch?._action === "regenerate_sections") {
       const st = selectedStory;
       if (!st) return;
-    
+
       const sectionIds = Array.isArray(patch.sectionIds) ? patch.sectionIds : [];
       if (sectionIds.length === 0) {
         alert("Nessuna sezione valida da rigenerare.");
         return;
       }
-    
+
+      // ✅ base revision risolta lato backend; la passiamo solo se esplicitata
       const baseRevisionId = st?.current_revision_id || st?.defaultVersionId || null;
-    
+
+      // ✅ knobs: li passiamo al Mac; verranno timbrati SOLO sui target
       const upstream = st?.meta?.upstreamParams || {};
       const knobs = {
         temp: Number(patch?.temp ?? upstream?.temp ?? 0.0),
@@ -257,81 +260,25 @@ export default function Stories(){
         seg_words: upstream?.seg_words,
         overlap_words: upstream?.overlap_words,
       };
-    
+
       try {
         setBusySectionIds(sectionIds);
-      
-        // build input per FastAPI (diretto /svc)
-        const paperText = getPaperTextFromStory(st);
-        const targets   = idsToIndexes(st.sections || [], sectionIds);
-      
-        const updatedFromVm = await regenerateSelectedSections(st.id, {
-          text: paperText,
-          persona: st?.persona || "General Public",
-          title:   st?.title   || "Story",
-          sections: st?.sections || [],
-          targets,
-          temp: knobs.temp,
-          top_p: knobs.top_p,
-          lengthPreset: knobs.lengthPreset,
-          retriever: knobs.retriever,
-          retriever_model: knobs.retriever_model,
-          k: knobs.k,
-          max_ctx_chars: knobs.max_ctx_chars,
-          seg_words: knobs.seg_words,
-          overlap_words: knobs.overlap_words,
-        });
-      
-        const targetSet = new Set(targets);
-        const prevSections = Array.isArray(st.sections) ? st.sections : [];
-        const nextSections = (Array.isArray(updatedFromVm?.sections) ? updatedFromVm.sections : prevSections)
-          .map((sec, i) => {
-            const prev = prevSections[i] || {};
-            const base = { hasImage: !!(sec?.hasImage ?? prev?.hasImage), visible: (sec?.visible ?? (prev?.visible !== false)) };
-            if (targetSet.has(i)) {
-              return {
-                ...prev,
-                ...sec,
-                id: prev.id ?? sec.id,      
-                ...base,
-                temp: knobs.temp,
-                lengthPreset: knobs.lengthPreset,
-              };
-            }
-            return {
-              ...prev,
-              ...sec,
-              id: prev.id ?? sec.id,        
-              ...base,
-              temp: (typeof prev?.temp === "number" ? prev.temp : undefined),
-              lengthPreset: (prev?.lengthPreset || undefined),
-            };
-          });
-      
-        await updateStory(st.id, {
-          title: st?.title || updatedFromVm?.title || "Story",
-          persona: updatedFromVm?.persona || st?.persona || "General Public",
-          sections: nextSections,
-          meta: {
-            ...(st?.meta || {}),
-            ...(updatedFromVm?.meta || {}),
-            upstreamParams: {
-              ...(st?.meta?.upstreamParams || {}),
-              mode: "regen_partial_vm",
-              temp: knobs.temp,
-              top_p: knobs.top_p,
-              lengthPreset: knobs.lengthPreset,
-              targets,
-            },
-            ...(patch?.notes ? { notes: patch.notes } : {}),
-          },
-          baseRevisionId,
+
+        // ✅ CHIAMATA UNICA AL MAC: niente VM diretta, niente merge client-side
+        const updatedStory = await regenerateSelectedSections(st.id, {
+          sectionIds,                 // preferisci gli ID visibili; il Mac li mappa a indici
+          ...(baseRevisionId ? { baseRevisionId } : {}),
+          knobs,
+          notes: patch?.notes || undefined,
         });
 
-        const full = await getStory(st.id);
         let versions = [];
         try { versions = await getRevisions(st.id); } catch {}
-        const withVersions = { ...full, versions, defaultVersionId: full?.current_revision_id || null };
+        const withVersions = {
+          ...updatedStory,
+          versions,
+          defaultVersionId: updatedStory?.current_revision_id || null,
+        };
 
         setStories(prev => prev.map(s => (s.id === withVersions.id ? withVersions : s)));
 
@@ -343,9 +290,9 @@ export default function Stories(){
         alert(err?.message || "Error during section regeneration.");
       } finally {
         setBusySectionIds([]);
-      }         
+      }
       return;
-    }    
+    }
 
     setLoading(true);
     try {
@@ -363,7 +310,6 @@ export default function Stories(){
       setLoading(false);
     }
   }
-  
 
   async function handleDelete(id) {
     await deleteStory(id);

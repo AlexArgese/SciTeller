@@ -207,8 +207,7 @@ export async function explainFromPdf({ file, persona, limit_sections = 5, temp =
   fd.set('limit_sections', String(limit_sections));
   fd.set('temp', String(temp));
   fd.set('top_p', String(top_p));
-  fd.set('title_style', String(title_style));
-  fd.set('title_max_words', String(title_max_words));
+
 
   const url = `${API_BASE}/api/explain`;
   const res = await fetch(url, { method: 'POST', body: fd });
@@ -267,32 +266,29 @@ export async function getRevisions(storyId) {
 
 // Rigenera usando outline esistente (salta lo splitter)
 export async function regenerateWithOutline({
-  text,                 // markdown pulito (paperText)
+  text,        
   persona,
-  title = "Story",      // **titolo esistente della story** (lo manteniamo)
-  outline,              // [{ title, description }]
+  title = "Story",  
+  outline,         
   temp = 0.0,
   top_p = 1.0,
   retriever, retriever_model, k, max_ctx_chars, seg_words, overlap_words,
 }) {
-  const url = `${API_BASE}/api/two_stage_story_from_outline`;
+  const url = `${API_BASE}/api/regen_vm`;
   const body = {
     persona,
-    paper_title: title,          // il backend lo chiama così
-    cleaned_text: text,
-    outline,
-    storyteller: {
-      preset: "medium",
-      temperature: temp,
-      top_p,
-      ...(retriever        !== undefined ? { retriever } : {}),
-      ...(retriever_model  !== undefined ? { retriever_model } : {}),
-      ...(k                !== undefined ? { k } : {}),
-      ...(max_ctx_chars    !== undefined ? { max_ctx_chars } : {}),
-      ...(seg_words        !== undefined ? { seg_words } : {}),
-      ...(overlap_words    !== undefined ? { overlap_words } : {}),
-      // puoi aggiungere max_new_tokens/min_new_tokens se vuoi
-    },
+    text,      
+    outline,          
+    title,          
+    length: "medium",   
+    temp,
+    top_p,
+    ...(retriever       !== undefined ? { retriever } : {}),
+    ...(retriever_model !== undefined ? { retriever_model } : {}),
+    ...(k               !== undefined ? { k } : {}),
+    ...(max_ctx_chars   !== undefined ? { max_ctx_chars } : {}),
+    ...(seg_words       !== undefined ? { seg_words } : {}),
+    ...(overlap_words   !== undefined ? { overlap_words } : {}),
   };
 
   const res = await fetch(url, {
@@ -342,73 +338,24 @@ export async function regenerateAndUpdateStory(storyId, {
   return updateStory(storyId, patch);
 }
 
-// Rigenerazione parziale — chiama DIRETTAMENTE il FastAPI (/svc/api/regen_sections_vm)
+// Rigenerazione parziale — chiama l'endpoint Next.js (auth-api)
 export async function regenerateSelectedSections(
-  _storyId,
-  {
-    text, persona, title, sections, targets,
-    temp = 0.0, top_p = 0.9, lengthPreset,
-    retriever, retriever_model, k, max_ctx_chars, seg_words, overlap_words,
-  }
+  storyId,
+  { sectionIds = [], baseRevisionId = null, knobs = {}, notes = "" }
 ) {
-  const url = `${API_BASE}/api/regen_sections_vm`;
-
-  // --- coercizioni robuste (evita undefined che spariscono nel JSON) ---
-  const safeText = String(text ?? "");
-  const safePersona = String(persona ?? "General Public");
-  const safeTitle = String(title ?? "Story");
-
-  const safeTargets = Array.isArray(targets)
-    ? targets.map(n => Number(n)).filter(n => Number.isFinite(n))
-    : [];
-
-  const safeSections = Array.isArray(sections) ? sections.map((s, i) => ({
-    id: s?.id ?? `sec-${i}`,
-    title: s?.title ?? `Section ${i + 1}`,
-    text: typeof s?.text === "string" ? s.text : (typeof s?.narrative === "string" ? s.narrative : ""),
-    paragraphs: Array.isArray(s?.paragraphs) ? s.paragraphs : [],
-    visible: s?.visible !== false,
-    hasImage: !!s?.hasImage,
-    description: s?.description ?? "",
-  })) : [];
-
   const body = {
-    text: safeText,              
-    persona: safePersona,      
-    title: safeTitle,
-    sections: safeSections,    
-    targets: safeTargets,     
-    temp: Number(temp),
-    top_p: Number(top_p),
-    length_preset: String(lengthPreset || "medium"),
-    knobs: {
-      temp: Number(temp),
-      top_p: Number(top_p),
-      lengthPreset: String(lengthPreset || "medium"),
-    },
-    ...(retriever        !== undefined ? { retriever } : {}),
-    ...(retriever_model  !== undefined ? { retriever_model } : {}),
-    ...(k                !== undefined ? { k } : {}),
-    ...(max_ctx_chars    !== undefined ? { max_ctx_chars } : {}),
-    ...(seg_words        !== undefined ? { seg_words } : {}),
-    ...(overlap_words    !== undefined ? { overlap_words } : {}),
+    storyId: String(storyId),
+    ...(Array.isArray(sectionIds) && sectionIds.length ? { sectionIds } : {}),
+    ...(baseRevisionId ? { baseRevisionId: String(baseRevisionId) } : {}),
+    ...(notes ? { notes: String(notes) } : {}),
+    ...(knobs && typeof knobs === "object" ? { knobs } : {}),
   };
 
-  // Log visibile sempre (Chrome mostra console.log anche in prod)
-  console.log("[regen_sections_vm] POST", url, { preview: {
-    text_len: body.text.length,
-    persona: body.persona,
-    title: body.title,
-    sections_len: body.sections.length,
-    targets: body.targets,
-    temp: body.temp,
-    top_p: body.top_p,
-    length_preset: body.length_preset,
-  }});
-
-  const res = await fetch(url, {
+  const res = await fetch(`/api/regen_sections_vm`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    cache: "no-store",
     body: JSON.stringify(body),
   });
 
@@ -416,10 +363,8 @@ export async function regenerateSelectedSections(
   let data; try { data = raw ? JSON.parse(raw) : {}; } catch { data = { raw }; }
 
   if (!res.ok) {
-    const msg =
-      (Array.isArray(data?.detail) ? data.detail.map(e => e?.msg || e).join(", ") : null) ||
-      data?.detail || data?.error || `HTTP ${res.status}`;
+    const msg = data?.error || data?.detail || `HTTP ${res.status}`;
     throw new Error(msg);
   }
-  return data; // { persona, title, sections, meta }
+  return data; // story materializzata (id, title, sections, persona, meta, ...)
 }

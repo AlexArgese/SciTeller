@@ -202,6 +202,8 @@ class StoryIn(BaseModel):
 class SectionOut(BaseModel):
     title: Optional[str] = None
     narrative: str
+    paragraphs: Optional[List[str]] = None
+    text: Optional[str] = None  
 
 class ExplainResponse(BaseModel):
     persona: str
@@ -216,13 +218,10 @@ class ExplainWithOutlineResponse(ExplainResponse):
 class GenerateFromTextRequest(BaseModel):
     text: str
     persona: str
-    length: str = "medium"
     words: int = 0
     limit_sections: int = 5
     temp: float = 0.0
     top_p: float = 0.9
-    title_style: str = "canonical"
-    title_max_words: int = 0
     title: Optional[str] = "Paper"
     length_preset: str = "medium"
     # === NEW: retrieval knobs (opzionali) ===
@@ -266,15 +265,12 @@ generate_from_text_example = {
     "value": {
         "text": "# Title\\n\\n## Introduction\\nThis paper studies ...",
         "persona": "Journalist",
-        "length": "medium",
+        "length_preset": "medium",
         "words": 0,
         "limit_sections": 4,
         "temp": 0.2,
         "top_p": 0.9,
-        "title_style": "canonical",
-        "title_max_words": 12,
         "title": "Paper",
-        "length_preset": "medium",
         "retriever": "auto",
         "k": 6
     }
@@ -341,8 +337,6 @@ async def explain_endpoint(
     limit_sections: int = Form(5, description="Maximum number of sections."),
     temp: float = Form(0.0, description="Creativity (0–1) for the storyteller."),
     top_p: float = Form(0.9, description="Top-p sampling."),
-    title_style: str = Form("canonical", description="Title style."),
-    title_max_words: int = Form(0, description="Title word limit (0 = auto)."),
     # --- firma /api/explain: aggiungi opzionali ---
     preset: str = Form("medium"),
     k: int | None = Form(None),
@@ -386,6 +380,7 @@ async def explain_endpoint(
 
     lp = resolve_length_params(length, words=None)  # in /api/explain non hai words esplicito
     split_temp = splitter_temp_from_story_temp(float(temp))
+    st_preset = (preset or lp["preset"])
 
     payload = {
         "persona": persona,
@@ -397,7 +392,7 @@ async def explain_endpoint(
             "temperature": split_temp,
         },
         "storyteller": {
-            "preset": (preset or lp["preset"]),
+            "preset": st_preset,
             "temperature": float(temp),
             "top_p": float(top_p),
             "max_new_tokens": lp["max_new_tokens"],
@@ -427,8 +422,6 @@ async def explain_endpoint(
         or "Story"
     )
 
-    print(story_title)
-
     eff_retriever       = retriever or RETRIEVAL_DEFAULTS["retriever"]
     eff_retriever_model = retriever_model or RETRIEVAL_DEFAULTS["retriever_model"]
     eff_k               = int(k) if k is not None else RETRIEVAL_DEFAULTS["k"]
@@ -443,11 +436,11 @@ async def explain_endpoint(
         "sections": _normalize_sections(sections),
         "meta": {
             "paperText": text,
-            "lengthPreset": lp["preset"],
+            "lengthPreset": st_preset,
             "creativity": int(float(temp) * 100),
             "outline": outline,
             "storytellerParams": {
-                "preset": lp["preset"],
+                "preset": st_preset,
                 "temperature": float(temp),
                 "top_p": float(top_p),
                 "max_new_tokens": lp["max_new_tokens"],
@@ -480,10 +473,7 @@ def generate_from_text(req: GenerateFromTextRequest = Body(..., examples={"defau
     if not REMOTE_GPU_URL:
         raise HTTPException(503, "GPU remoto non configurato (REMOTE_GPU_URL).")
 
-    lp = resolve_length_params(
-        getattr(req, "length_preset", None) or req.length or "medium",
-        getattr(req, "words", None),
-    )
+    lp = resolve_length_params(req.length_preset or "medium", req.words)
     split_temp = splitter_temp_from_story_temp(float(req.temp))
 
     payload = {
@@ -534,7 +524,7 @@ def generate_from_text(req: GenerateFromTextRequest = Body(..., examples={"defau
         "sections": _normalize_sections(sections),
         "meta": {
             "paperText": req.text,                 # 👈 serve dopo per regen parziale/nuove chiamate
-            "lengthPreset": (getattr(req, "length_preset", None) or req.length or "medium"),
+            "lengthPreset": lp["preset"],
             "creativity": int(float(req.temp or 0.0) * 100),
             "outline": outline,
             "storytellerParams": {

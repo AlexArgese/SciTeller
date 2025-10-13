@@ -28,7 +28,7 @@ export async function GET(_req, { params }) {
     createdAt: r.createdAt,
     persona: r.persona,
     meta: r.meta || {},
-    notes: r.meta?.notes || null,      // se un domani salvi note
+    notes: r.meta?.notes || null, 
   }));
 
   return NextResponse.json(versions);

@@ -82,3 +82,11 @@
 section[aria-busy="true"] {
   opacity: .85;
 }
+
+/* StoryView.module.css */
+.section[aria-busy="true"] {
+  opacity: .85;
+}
+.section[aria-busy="true"] * {
+  pointer-events: none;
+}

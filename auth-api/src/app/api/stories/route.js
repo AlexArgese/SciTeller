@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { auth } from '@/auth';
 import { db, Schema } from '@/db/index.js';
 import { and, desc, eq } from 'drizzle-orm';
+import { randomUUID } from 'node:crypto';
 
 const { stories, storyRevisions } = Schema;
 
@@ -63,7 +64,7 @@ export async function POST(req) {
   const body = await req.json().catch(() => ({}));
   const title = (body.title || 'Story').toString().slice(0, 200);
 
-  const id = crypto.randomUUID();
+  const id = randomUUID();
   const now = new Date();
 
   await db.insert(stories).values({
@@ -72,6 +73,7 @@ export async function POST(req) {
     title,
     createdAt: now,
     updatedAt: now,
+    visibility: 'private',
   });
 
   // nessuna revisione ancora

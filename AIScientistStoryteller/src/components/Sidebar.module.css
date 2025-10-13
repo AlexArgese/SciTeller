@@ -32,7 +32,9 @@
 .scroll {
   overflow: auto;
   padding: var(--sp-3);
-  display: grid;
+  display: flex;
+  flex-direction: column;
+  align-items: start;
   gap: 8px;
 }
 .loading { padding: 8px 12px; color: #666; }
@@ -52,6 +54,7 @@
   transition: background var(--dur-2) var(--ease-emph), border-color var(--dur-2) var(--ease-emph);
   box-shadow: var(--glass-item-sd);
   height: 2.5em;
+  width: 100%;
 }
 .item:hover {  background: color-mix(in oklab, var(--accent) 49%, rgba(255,255,255,.62)); }
 
