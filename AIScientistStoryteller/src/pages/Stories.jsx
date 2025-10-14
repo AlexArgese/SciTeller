@@ -8,6 +8,9 @@ import styles from "./Stories.module.css";
 import {
   getStories, getStory, createStory, updateStory, deleteStory,
   generateFromText, getRevisions, regenerateSelectedSections,
+  regenerateParagraphVm,
+  // ⬇️ nuove API per varianti
+  getParagraphVariantsHistory, chooseParagraphVariant,
 } from "../services/storiesApi.js";
 import Loading from "../components/Loading.jsx";
 
@@ -24,11 +27,9 @@ function resolveTargetsFromIds(story, sectionIds = []) {
 }
 
 function getPaperTextFromStory(story) {
-  // preferisci quello messo dal backend in meta.paperText (ex explain/generate)
   const t = story?.meta?.paperText;
   if (typeof t === "string" && t.trim()) return t;
 
-  // fallback: ricostruisci dal contenuto corrente
   const sections = Array.isArray(story?.sections) ? story.sections : [];
   return sections
     .map((s, i) => {
@@ -56,6 +57,38 @@ function idsToIndexes(sections, ids) {
   return idxs.sort((a, b) => a - b);
 }
 
+// helper: trova index di sezione da id
+function sectionIndexById(story, sectionId) {
+  if (!story || !Array.isArray(story.sections)) return -1;
+  return story.sections.findIndex(
+    (s, i) => String(s?.id ?? s?.sectionId ?? i) === String(sectionId)
+  );
+}
+
+function applyParagraphReplacement(story, { sectionId, paragraphIndex, newText }) {
+  if (!story || !Array.isArray(story.sections)) return story;
+  const idx = (story.sections || []).findIndex(
+    s => String(s?.id ?? s?.sectionId ?? "") === String(sectionId)
+  );
+  if (idx < 0) return story;
+
+  const sec = story.sections[idx] || {};
+  const paras = Array.isArray(sec.paragraphs) ? [...sec.paragraphs] : [];
+  if (paragraphIndex < 0 || paragraphIndex >= paras.length) return story;
+
+  paras[paragraphIndex] = newText;
+
+  const nextSections = [...story.sections];
+  nextSections[idx] = {
+    ...sec,
+    paragraphs: paras,
+    text: paras.join("\n\n"),
+    narrative: paras.join("\n\n"),
+  };
+
+  return { ...story, sections: nextSections };
+}
+
 export default function Stories(){
   const [stories, setStories] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
@@ -76,6 +109,11 @@ export default function Stories(){
 
   // pagina di mezzo anche durante rigenerazione
   const [isRegenerating, setIsRegenerating] = useState(false);
+
+  // ⬇️ stato per varianti
+  const [variantHistory, setVariantHistory] = useState([]); // [{batchId, createdAt, variants:[{id,text,rank,...}], ...}]
+  const [variantLoading, setVariantLoading] = useState(false);
+  const [variantError, setVariantError] = useState(null);
 
   const extractMsgs = useMemo(
     () => [
@@ -154,6 +192,57 @@ export default function Stories(){
     () => stories.find(s => s.id === selectedId),
     [stories, selectedId]
   );
+
+  // ⬇️ helpers per varianti
+  async function refreshVariantsForSelection(story, sectionId, paragraphIndex) {
+    setVariantError(null);
+    setVariantHistory([]);
+    if (!story || paragraphIndex == null) return;
+
+    const secIdx = sectionIndexById(story, sectionId);
+    if (secIdx < 0) return;
+
+    setVariantLoading(true);
+    try {
+      const items = await getParagraphVariantsHistory({
+        storyId: story.id,
+        sectionIndex: secIdx,
+        paragraphIndex,
+      });
+      setVariantHistory(items || []);
+    } catch (e) {
+      setVariantError(e?.message || "Failed loading paragraph variants.");
+    } finally {
+      setVariantLoading(false);
+    }
+  }
+
+  async function handleChooseVariantFromHistory(batchId, variantId) {
+    if (!selectedStory) return;
+    try {
+      const updated = await chooseParagraphVariant({
+        storyId: selectedStory.id,
+        batchId,
+        variantId,
+      });
+      // aggiorna la story nella lista
+      let versions = [];
+      try { versions = await getRevisions(selectedStory.id); } catch {}
+      const withVersions = {
+        ...updated,
+        versions,
+        defaultVersionId: updated?.current_revision_id || null,
+      };
+      setStories(prev => prev.map(s => (s.id === withVersions.id ? withVersions : s)));
+
+      // ricarica lo storico per la selezione corrente
+      if (selectedParagraph?.sectionId != null && selectedParagraph?.index != null) {
+        await refreshVariantsForSelection(withVersions, selectedParagraph.sectionId, selectedParagraph.index);
+      }
+    } catch (e) {
+      alert(e?.message || "Unable to adopt this variant.");
+    }
+  }
 
   async function handleNew() {
     const s = await createStory(`Chat ${stories.length + 1}`);
@@ -244,10 +333,8 @@ export default function Stories(){
         return;
       }
 
-      // ✅ base revision risolta lato backend; la passiamo solo se esplicitata
       const baseRevisionId = st?.current_revision_id || st?.defaultVersionId || null;
 
-      // ✅ knobs: li passiamo al Mac; verranno timbrati SOLO sui target
       const upstream = st?.meta?.upstreamParams || {};
       const knobs = {
         temp: Number(patch?.temp ?? upstream?.temp ?? 0.0),
@@ -264,9 +351,8 @@ export default function Stories(){
       try {
         setBusySectionIds(sectionIds);
 
-        // ✅ CHIAMATA UNICA AL MAC: niente VM diretta, niente merge client-side
         const updatedStory = await regenerateSelectedSections(st.id, {
-          sectionIds,                 // preferisci gli ID visibili; il Mac li mappa a indici
+          sectionIds,
           ...(baseRevisionId ? { baseRevisionId } : {}),
           knobs,
           notes: patch?.notes || undefined,
@@ -294,6 +380,142 @@ export default function Stories(){
       return;
     }
 
+    if (patch?._action === "regen_paragraph_vm") {
+      const st = selectedStory;
+      if (!st) return;
+
+      const sectionId = patch.sectionId;
+      const paragraphIndex = Number(patch.paragraphIndex);
+      if (sectionId === undefined || paragraphIndex === undefined || Number.isNaN(paragraphIndex)) {
+        alert("Parametri mancanti per la rigenerazione del paragrafo.");
+        return;
+      }
+
+      setBusySectionIds([sectionId]);
+
+      try {
+        const baseRevisionId = st?.current_revision_id || st?.defaultVersionId || null;
+        const paragraphText = patch?.paragraphText || selectedParagraph?.text || "";
+        const ops = patch?.ops || {};
+
+        const res = await regenerateParagraphVm(st.id, {
+          sectionId,
+          paragraphIndex,
+          paragraphText,
+          ops,
+          ...(baseRevisionId ? { baseRevisionId } : {}),
+          notes: patch?.notes || "",
+        });
+
+        // A) backend ritorna la story già aggiornata
+        if (res && Array.isArray(res.sections)) {
+          let versions = [];
+          try { versions = await getRevisions(st.id); } catch {}
+          const withVersions = {
+            ...res,
+            versions,
+            defaultVersionId: res?.current_revision_id || null,
+          };
+          setStories(prev => prev.map(s => (s.id === withVersions.id ? withVersions : s)));
+
+          // aggiorna storico varianti e apri tab "variants"
+          await refreshVariantsForSelection(withVersions, sectionId, paragraphIndex);
+          setCpStage("variants");
+          if (!openCP) setOpenCP(true);
+        }
+        // B) backend ritorna solo alternative → applica la prima e salva
+        else if (Array.isArray(res?.alternatives) && res.alternatives.length) {
+          const choice = res.alternatives[0];
+          const localApplied = applyParagraphReplacement(st, {
+            sectionId, paragraphIndex, newText: String(choice || paragraphText),
+          });
+          if (localApplied) {
+            const saved = await updateStory(st.id, {
+              sections: localApplied.sections,
+              meta: {
+                ...(st.meta || {}),
+                upstreamParams: {
+                  ...((st.meta && st.meta.upstreamParams) || {}),
+                  mode: "regen_paragraph_vm",
+                },
+              },
+              ...(patch.baseRevisionId ? { baseRevisionId: patch.baseRevisionId } : {}),
+              ...(patch?.notes ? { notes: patch.notes } : {}),
+            });
+            let versions = [];
+            try { versions = await getRevisions(st.id); } catch {}
+            const withVersions = {
+              ...saved,
+              versions,
+              defaultVersionId: saved?.current_revision_id || null,
+            };
+            setStories(prev => prev.map(s => (s.id === withVersions.id ? withVersions : s)));
+
+            // aggiorna storico varianti e apri tab "variants"
+            await refreshVariantsForSelection(withVersions, sectionId, paragraphIndex);
+            setCpStage("variants");
+            if (!openCP) setOpenCP(true);
+          }
+        }
+
+        // cleanup selezioni (teniamo però il paragrafo selezionato per mostrare il pannello varianti)
+        setSelectedSectionId(sectionId);
+        setSelectedParagraph({ sectionId, index: paragraphIndex, text: paragraphText });
+      } catch (err) {
+        console.error("regen_paragraph_vm failed", err);
+        alert(err?.message || "Error during paragraph regeneration.");
+      } finally {
+        setBusySectionIds([]);
+      }
+      return;
+    }  
+    
+    if (patch?._action === "apply_paragraph_variant") {
+      const st = selectedStory;
+      if (!st) return;
+      const { sectionId, paragraphIndex, newText } = patch;
+      if (sectionId == null || typeof paragraphIndex !== "number") {
+        alert("Missing params to apply paragraph variant.");
+        return;
+      }
+      // aggiorna localmente il paragrafo
+      const localApplied = applyParagraphReplacement(st, {
+        sectionId,
+        paragraphIndex: Number(paragraphIndex),
+        newText: String(newText || ""),
+      });
+      if (localApplied) {
+        const saved = await updateStory(st.id, {
+          sections: localApplied.sections,
+          meta: {
+            ...(st.meta || {}),
+            // timbro: scelta manuale di una variante
+            lastParagraphChoice: {
+              at: new Date().toISOString(),
+              sectionId: String(sectionId),
+              paragraphIndex: Number(paragraphIndex),
+            },
+            upstreamParams: {
+              ...((st.meta && st.meta.upstreamParams) || {}),
+              mode: "apply_paragraph_variant",
+            },
+          },
+          ...(patch?.baseRevisionId ? { baseRevisionId: patch.baseRevisionId } : {}),
+          ...(patch?.notes ? { notes: patch.notes } : {}),
+        });
+        let versions = [];
+        try { versions = await getRevisions(st.id); } catch {}
+        const withVersions = {
+          ...saved,
+          versions,
+          defaultVersionId: saved?.current_revision_id || null,
+        };
+        setStories(prev => prev.map(s => (s.id === withVersions.id ? withVersions : s)));
+      }
+      return;
+    }    
+
+    // PATCH “normale”
     setLoading(true);
     try {
       await updateStory(selectedStory.id, patch);
@@ -323,6 +545,9 @@ export default function Stories(){
       setShowPdf(false);
       setPdfError(null);
       setPdfHighlights([]);
+      setVariantHistory([]);
+      setVariantError(null);
+      setVariantLoading(false);
     }
   }
 
@@ -331,16 +556,28 @@ export default function Stories(){
       selectedParagraph.sectionId === sectionId &&
       selectedParagraph.index === index;
 
-    setSelectedParagraph(same ? null : { sectionId, index, text });
+    const nextSel = same ? null : { sectionId, index, text };
+    setSelectedParagraph(nextSel);
     setSelectedSectionId(sectionId);
     setCpStage("default");
     if (!openCP) setOpenCP(true);
+
+    // carica lo storico varianti quando selezioni un paragrafo
+    if (!same && selectedStory) {
+      refreshVariantsForSelection(selectedStory, sectionId, index);
+    } else {
+      // se deselezioni, svuota lo storico
+      setVariantHistory([]);
+      setVariantError(null);
+    }
   }
 
   function handleSelectSection(sectionId) {
     setSelectedSectionId(prev => (prev === sectionId ? null : sectionId));
-    setSelectedParagraph(null); // deseleziona eventuale paragrafo
+    setSelectedParagraph(null);
     setCpStage("default");
+    setVariantHistory([]);
+    setVariantError(null);
     if (!openCP) setOpenCP(true);
   }
 
@@ -357,7 +594,7 @@ export default function Stories(){
     setPdfError(null);
     const sameOrigin = url && (url.startsWith("/") || new URL(url, window.location.origin).origin === window.location.origin);
     if (!sameOrigin) {
-      alert("Questo PDF è da dominio esterno. Per la preview inline, metti il file in /public (es. /papers/demo.pdf) oppure usa un proxy lato server.");
+      alert("This PDF is from an external domain. For inline preview, place the file in /public (e.g., /papers/demo.pdf) or use a server-side proxy.");
       return;
     }
     setPdfHighlights(randomHighlight());
@@ -366,6 +603,19 @@ export default function Stories(){
 
   const handleContinueNotes  = () => { setCpStage("notes"); };
   const handleContinueGlobal = () => { setSelectedParagraph(null); setSelectedSectionId(null); setCpStage("notes"); };
+
+  // comodo: genera nuove alternative e apre tab “variants”
+  const handleGenerateAlternatives = async ({ sectionId, paragraphIndex, ops, notes }) => {
+    await handleUpdate({
+      _action: "regen_paragraph_vm",
+      sectionId,
+      paragraphIndex,
+      ops,
+      notes,
+    });
+    setCpStage("variants");
+    if (!openCP) setOpenCP(true);
+  };
 
   const SIDEBAR_W = 300;
   const PANEL_W   = 380;
@@ -442,6 +692,9 @@ export default function Stories(){
           setShowPdf(false);
           setPdfError(null);
           setPdfHighlights([]);
+          setVariantHistory([]);
+          setVariantError(null);
+          setVariantLoading(false);
           setLoading(true);
           try {
             const full = await getStory(id);
@@ -459,7 +712,7 @@ export default function Stories(){
         }}
         onNew={handleNew}
         onDelete={handleDelete}
-        loading={false /* non serve spinner interno: usiamo la pagina Loading */}
+        loading={false}
       />
 
       <main className={styles.centerCol}>
@@ -523,6 +776,23 @@ export default function Stories(){
             onChangeSections={(next) => handleUpdate({ sections: next })}
             onJumpToSection={handleScrollToSection}
             onClosePanel={() => setOpenCP(false)}
+
+            // ⬇️ nuove props per varianti
+            variantHistory={variantHistory}
+            variantLoading={variantLoading}
+            variantError={variantError}
+            onRefreshVariants={async () => {
+              if (selectedStory && selectedParagraph) {
+                await refreshVariantsForSelection(
+                  selectedStory,
+                  selectedParagraph.sectionId,
+                  selectedParagraph.index
+                );
+              }
+            }}
+            onChooseVariant={handleChooseVariantFromHistory}
+            onGenerateAlternatives={handleGenerateAlternatives}
+            setCpStage={setCpStage}
           />
         </>
       )}

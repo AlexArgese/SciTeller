@@ -20,7 +20,7 @@ body {
   background: var(--bg);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  min-height: 100vh;
+  min-height: 100vh ;
 }
 main {
   flex: 1; /* si espande per occupare lo spazio vuoto */
@@ -64,8 +64,6 @@ body::after{
   padding-right: 0;
 }
 
-/* Footer helper */
-.appFooter { margin-top: var(--sp-10); }
 
 /* Primitives */
 .card {
@@ -128,18 +126,6 @@ body::after{
 /* Route offset */
 body[data-route="home"] .container { margin-top: calc(var(--sp-7) + var(--nav-h)); }
 
-/* Footer (match component) */
-footer.appFooter {
-  width: var(--container-w);
-  margin-left: auto; margin-right: auto;
-  padding: var(--sp-7) 0;
-  display: grid; grid-template-columns: 1fr auto auto;
-  align-items: center; gap: var(--sp-6);
-  color: var(--text-2);
-  border-top: 1px dashed var(--line-0);
-}
-footer.appFooter .copy { font-size: var(--fs-small); }
-footer.appFooter .gh svg path { fill: var(--ink-0); }
 
 /* Utilities */
 .center { display: grid; place-items: center; }
@@ -153,10 +139,7 @@ body[data-route="stories"] .container {
   margin-top: 0 !important;     /* niente nav-h qui */
   padding-top: 0 !important;    /* nessun padding che introduca ritardi */
 }
-body[data-route="stories"] .appFooter,
-body[data-route="stories"] footer.appFooter {
-  margin-top: 0 !important;
-}
+
 /* Reduced motion */
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }

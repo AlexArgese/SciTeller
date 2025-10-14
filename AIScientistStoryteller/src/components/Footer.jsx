@@ -16,8 +16,9 @@ export default function Footer() {
 
   return (
     <footer ref={ref} className={`${styles.footer}`}> 
+      <div className={styles.copy}>© 2025 | EURECOM </div>
       <img className={styles.logo} src="logoNObg2.png" />
-      <div className={styles.copy}>© 2025 AI Scientist Storyteller</div>
+      <div className={styles.copy}>AI Scientist Storyteller</div>
     </footer>
   );
 }

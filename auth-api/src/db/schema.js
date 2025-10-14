@@ -76,3 +76,23 @@ export const storyShares = pgTable('story_shares', {
   createdByUserId: text('created_by_user_id'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
+
+export const paragraphVariantBatches = pgTable('paragraph_variant_batches', {
+  id: text('id').primaryKey(),                      
+  storyId: text('story_id').notNull(),             
+  baseRevisionId: text('base_revision_id'),         
+  sectionId: text('section_id').notNull(),          
+  sectionIndex: integer('section_index').notNull(),   
+  paragraphIndex: integer('paragraph_index').notNull(),
+  opsJson: jsonb('ops_json').notNull().default({}),  
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const paragraphVariants = pgTable('paragraph_variants', {
+  id: text('id').primaryKey(),                       
+  batchId: text('batch_id').notNull(),              
+  text: text('text').notNull(),                   
+  rank: integer('rank').notNull().default(0),       
+  appliedRevisionId: text('applied_revision_id'),   
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});

@@ -3,7 +3,7 @@
 .wrap{
   position: sticky;
   top: calc(var(--nav-h) + 2*var(--sticky-gap, var(--sp-2)));
-  max-height: calc(100vh - var(--nav-h) - (2* var(--sticky-gap, var(--sp-2)) * 2));
+  max-height: calc(100vh - var(--nav-h) - (2* var(--sticky-gap, var(--sp-2)) * 2) - 5.5em);
   width: var(--sidebar-w);
 
   /* fondamentale: il grid item deve “stirarsi” sulla riga */
@@ -13,16 +13,16 @@
 
 .panel{
   width: var(--sidebar-w);
-  height: 100%;
+  min-height: calc(100vh - 2 * 6em);
   display: grid;
   grid-template-rows: 1fr auto;
   border-radius: 0 5px 5px 0;
   background: var(--bg-navbar);
   -webkit-backdrop-filter: blur(14px);
   backdrop-filter: blur(3px);
-  box-shadow: var(--glass-beigeSB-sd);
-  position: relative;
+  position: fixed;
   overflow: visible; /* serve per far “uscire” l’after a metà */
+  border: 1px dashed var(--line-0);
 }
 
 
@@ -86,7 +86,6 @@
   border-top: 1px dashed var(--line-0);
   background: rgba(255,255,255,.36);
   border-radius: 0 0 5px 0;
-  box-shadow: var(--glass-beigeSB-footer-sd);
 }
 
 .newBtn {

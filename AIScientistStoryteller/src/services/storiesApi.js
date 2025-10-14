@@ -88,8 +88,6 @@ function adaptTwoStageSection(s, i = 0) {
   };
 }
 
-
-
 function patchFromAdapted(adapted) {
   return {
     title: adapted.title || adapted.docTitle || "Story",
@@ -98,7 +96,6 @@ function patchFromAdapted(adapted) {
     meta: adapted.meta || null,
   };
 }
-
 
 // ---- API DB (authed) ----
 // NB: ogni funzione prova il DB e, se riceve 401, fa FALLBACK guest.
@@ -160,8 +157,6 @@ export async function updateStory(id, patch) {
   return res.json();
 }
 
-
-
 export async function deleteStory(id) {
   const { status, ok, data } = await callApi(`/api/stories/${encodeURIComponent(id)}`, {
     method: 'DELETE',
@@ -197,8 +192,6 @@ export async function generateFromText({
   return adaptTwoStageResponse(data);
 }
 
-
-
 export async function explainFromPdf({ file, persona, limit_sections = 5, temp = 0.0, top_p = 0.9, title_style = 'canonical', title_max_words = 0 }) {
   const fd = new FormData();
   fd.set('persona', persona);
@@ -208,14 +201,12 @@ export async function explainFromPdf({ file, persona, limit_sections = 5, temp =
   fd.set('temp', String(temp));
   fd.set('top_p', String(top_p));
 
-
   const url = `${API_BASE}/api/explain`;
   const res = await fetch(url, { method: 'POST', body: fd });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data?.detail || data?.error || 'Failed POST /api/explain');
   return adaptTwoStageResponse(data);
 }
-
 
 // Convenienze: chiamano il modello e AGGIORNANO subito la story (DB o guest)
 export async function explainAndUpdateStory(storyId, args) {
@@ -252,7 +243,6 @@ export async function generateTextAndUpdateStory(storyId, args) {
   return updateStory(storyId, patch);
 }
 
-
 export async function getRevisions(storyId) {
   const res = await fetch(`/api/stories/${encodeURIComponent(storyId)}/revisions`, {
     method: "GET",
@@ -262,7 +252,6 @@ export async function getRevisions(storyId) {
   if (!res.ok) throw new Error(await res.text());
   return res.json(); // [{id,createdAt,persona,meta:{parentRevisionId,...}}]
 }
-
 
 // Rigenera usando outline esistente (salta lo splitter)
 export async function regenerateWithOutline({
@@ -366,5 +355,154 @@ export async function regenerateSelectedSections(
     const msg = data?.error || data?.detail || `HTTP ${res.status}`;
     throw new Error(msg);
   }
-  return data; // story materializzata (id, title, sections, persona, meta, ...)
+  return data; 
+}
+
+// ======== VARIANTI DI PARAGRAFO: helpers & API ========
+
+// pulisce eventuale JSON “deragliato” dal modello e restituisce il testo nudo
+export function sanitizeMaybeJsonGarbage(text) {
+  const t = (text ?? "").trim();
+  try {
+    const j = JSON.parse(t);
+    if (j?.sections?.[0]?.text) return j.sections[0].text;
+    if (j?.text) return j.text;
+  } catch {}
+  // rimuove eventuale blob JSON iniziale
+  const stripped = t.replace(/^\s*\{[\s\S]*?\}\s*/g, "").trim();
+  return stripped || t;
+}
+
+// default ops usate nel control panel
+export const defaultParagraphOps = {
+  paraphrase: true,
+  simplify: false,
+  length_op: "keep",   // keep | shorten | lengthen
+  temperature: 0.0,
+  top_p: 0.9,
+  n: 1,
+  length_preset: "medium",
+};
+
+// 1) CHIEDI AL BACKEND DI GENERARE LE ALTERNATIVE (e salvare il batch)
+//    L’endpoint crea anche una nuova revisione “adottando” la prima alternativa.
+export async function regenerateParagraphVm(
+  storyId,
+  {
+    sectionId,
+    paragraphIndex,
+    paragraphText = "",
+    ops = defaultParagraphOps,
+    baseRevisionId = null,
+    notes = "",
+  }
+) {
+  if (!storyId) throw new Error("regenerateParagraphVm: missing storyId");
+  if (sectionId === undefined || sectionId === null)
+    throw new Error("regenerateParagraphVm: missing sectionId");
+  if (paragraphIndex === undefined || paragraphIndex === null)
+    throw new Error("regenerateParagraphVm: missing paragraphIndex");
+
+  const body = {
+    storyId: String(storyId),
+    sectionId: String(sectionId),
+    index: Number(paragraphIndex), // il route accetta anche 'index'
+    ...(paragraphText ? { text: String(paragraphText) } : {}),
+    paraphrase: !!ops.paraphrase,
+    simplify: !!ops.simplify,
+    lengthOp: String(ops.length_op || "keep"),
+    n: Math.max(1, Math.min(3, Number(ops.n ?? 1))),
+    temp: Number(ops.temperature ?? 0.0),
+    top_p: Number(ops.top_p ?? 0.9),
+    lengthPreset: String(ops.length_preset || "medium"),
+    ...(baseRevisionId ? { baseRevisionId: String(baseRevisionId) } : {}),
+    ...(notes ? { notes: String(notes) } : {}),
+  };
+
+  const res = await fetch(`/api/regen_paragraph_vm`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    cache: "no-store",
+    body: JSON.stringify(body),
+  });
+
+  const raw = await res.text().catch(() => "");
+  let data;
+  try {
+    data = raw ? JSON.parse(raw) : {};
+  } catch {
+    data = { raw };
+  }
+
+  if (!res.ok) {
+    const msg = data?.error || data?.detail || `HTTP ${res.status}`;
+    throw new Error(msg);
+  }
+
+  return data; // story materializzata aggiornata + (meta.lastParagraphEdit.candidates) lato server
+}
+
+// 2) LISTA batch + varianti per quel paragrafo (history)
+//    GET /api/paragraph_variants?storyId=...&sectionIndex=...&paragraphIndex=...
+export async function getParagraphVariantsHistory({
+  storyId,
+  sectionIndex,
+  paragraphIndex,
+}) {
+  const q = new URLSearchParams({
+    storyId: String(storyId),
+    sectionIndex: String(sectionIndex),
+    paragraphIndex: String(paragraphIndex),
+  }).toString();
+
+  const res = await fetch(`/api/paragraph_variants?${q}`, {
+    method: "GET",
+    credentials: "include",
+    cache: "no-store",
+  });
+
+  const raw = await res.text().catch(() => "");
+  let data; try { data = raw ? JSON.parse(raw) : {}; } catch { data = { raw }; }
+
+  if (!res.ok) {
+    const msg = data?.error || data?.detail || `HTTP ${res.status}`;
+    throw new Error(msg);
+  }
+
+  // normalizza i testi delle varianti
+  const items = Array.isArray(data?.items) ? data.items : [];
+  return items.map(({ batch, variants }) => ({
+    ...batch,
+    variants: (variants || []).map(v => ({
+      ...v,
+      text: sanitizeMaybeJsonGarbage(v.text),
+    })),
+  }));
+}
+
+// 3) ADOTTA una variante già generata (commit → nuova revisione)
+export async function chooseParagraphVariant({
+  storyId,
+  batchId,
+  variantId,
+}) {
+  const res = await fetch(`/api/paragraph_variants/choose`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    cache: "no-store",
+    body: JSON.stringify({ storyId, batchId, variantId }),
+  });
+
+  const raw = await res.text().catch(() => "");
+  let data; try { data = raw ? JSON.parse(raw) : {}; } catch { data = { raw }; }
+
+  if (!res.ok) {
+    const msg = data?.error || data?.detail || `HTTP ${res.status}`;
+    throw new Error(msg);
+  }
+
+  // ritorna la story materializzata aggiornata (così aggiorni l’editor)
+  return data;
 }

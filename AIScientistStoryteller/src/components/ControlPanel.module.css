@@ -7,11 +7,10 @@
 .panel{
   position: sticky;
   top: calc(var(--nav-h) + 2*var(--sticky-gap, var(--sp-2)));
-  max-height: calc(100vh - var(--nav-h) - (2* var(--sticky-gap, var(--sp-2)) * 2));
+  max-height: calc(100vh - var(--nav-h) - (2* var(--sticky-gap, var(--sp-2)) * 2) - 5.5em);
   width: var(--panel-w);
-  margin-right: var(--sp-3);
   align-self: stretch;
-
+  min-height: calc(100vh - 2 * 6em);
   display: grid;
   grid-template-rows: auto 1fr;
 
@@ -19,8 +18,10 @@
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur));
   backdrop-filter: blur(var(--glass-blur));
-  box-shadow: var(--glass-CP-sd);
   overflow: hidden;
+  position: fixed;
+  right: 0;
+  border: 1px dashed var(--line-0);
 }
 
 /* HEADER ────────────────────────────────────────────────────── */
@@ -35,7 +36,6 @@
   -webkit-backdrop-filter: blur(3px);
   backdrop-filter: blur(3px);
   border-bottom: 1px dashed var(--line-0);
-  box-shadow: var(--glass-beigeCP-sd);
 }
 
 .titleBlock{ display: grid; gap: 6px; }
@@ -124,7 +124,6 @@
   padding: 0 2px var(--sp-3);
   border-bottom: 1px dashed color-mix(in oklab, var(--line-0) 70%, transparent);
   width: 100%;
-  box-shadow: var(--glass-scope-sd);
   /* stesse variabili */
   --tab-x: 0px;
   --tab-w: 60px;
@@ -203,12 +202,12 @@
 .scroll{
   overflow: auto;
   display: flex; flex-direction: column; gap: var(--sp-3); align-items: center; width: 100%;
+  background-color: #ede9e263;
 }
 
 /* FORMS & CARDS */
 .section{
   padding: var(--sp-2) var(--sp-6);
-  width: 100%;
 }
 
 .formGrid{ display: grid; gap: var(--sp-5); margin-top: 2em;}

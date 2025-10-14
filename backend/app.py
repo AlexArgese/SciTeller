@@ -255,6 +255,34 @@ class RegenSectionsVmResp(BaseModel):
     sections: List[Dict[str, Any]]
     meta: Optional[Dict[str, Any]] = None
 
+class VmSection(BaseModel):
+    title: str | None = None
+    paragraphs: list[str] = []
+
+
+class RegenParagraphOps(BaseModel):
+    paraphrase: bool = True
+    simplify: bool = False
+    length_op: str = "keep"     # keep | shorten | lengthen
+    temperature: float = 0.0
+    top_p: float = 0.9
+    n: int = 1
+    length_preset: str = "medium"
+
+class RegenParagraphVmReq(BaseModel):
+    persona: str = "General Public"
+    title: Optional[str] = "Paper"
+    text: str
+    section_index: int
+    paragraph_index: int
+    paragraph_text: Optional[str] = None
+    section: Optional[VmSection] = None   # ✅ typed section
+    ops: RegenParagraphOps
+
+
+class RegenParagraphVmResp(BaseModel):
+    alternatives: List[str] = []   # le proposte della VM (1..3)
+    meta: Optional[Dict[str, Any]] = None
 
 GenerateFromTextRequest.__doc__ = """
 Generate a multi-section story from already-extracted text/markdown.
@@ -735,3 +763,59 @@ def regen_sections_vm(req: RegenSectionsVmReq):
     }
 
     return {"persona": persona, "title": (data.get("title") or title), "sections": merged, "meta": meta}
+
+@app.post("/api/regen_paragraph_vm", tags=["VM Orchestrator"], summary="Rigenera un singolo paragrafo (GPU VM)", response_model=RegenParagraphVmResp)
+def regen_paragraph_vm(req: RegenParagraphVmReq):
+    if not REMOTE_GPU_URL:
+        raise HTTPException(503, "GPU remoto non configurato (REMOTE_GPU_URL).")
+
+    # --- SAFETY: section + paragraphs present?
+    sec_title = (req.section.title if req.section and req.section.title else f"Section {req.section_index+1}")
+    sec_paragraphs = (req.section.paragraphs if req.section and req.section.paragraphs else [])
+
+    if not sec_paragraphs:
+        # The upstream VM needs the actual paragraph list to validate indices
+        raise HTTPException(422, "missing section paragraphs")
+
+    if req.paragraph_index < 0 or req.paragraph_index >= len(sec_paragraphs):
+        raise HTTPException(422, "invalid paragraph_index for provided section.paragraphs")
+
+    payload = {
+        "persona": req.persona,
+        "paper_title": req.title or "Paper",
+        "cleaned_text": req.text,
+        "section": {
+            "title": sec_title,
+            "paragraphs": sec_paragraphs,
+        },
+        "section_index": int(req.section_index),
+        "paragraph_index": int(req.paragraph_index),
+        "ops": {
+            "paraphrase": bool(req.ops.paraphrase),
+            "simplify": bool(req.ops.simplify),
+            "length_op": str(req.ops.length_op or "keep"),
+        },
+        # top-level sampling knobs (as your GPU VM expects them outside ops)
+        "temperature": float(req.ops.temperature or 0.3),
+        "top_p": float(req.ops.top_p or 0.9),
+        "n": max(1, min(3, int(req.ops.n or 1))),
+    }
+
+    data = _gpu("/api/regen_paragraph_vm", payload, timeout=1800)
+
+    alts_raw = data.get("alternatives") or []
+    alts = []
+    for a in alts_raw:
+        alts.append(a["text"].strip() if isinstance(a, dict) and "text" in a else (a.strip() if isinstance(a, str) else ""))
+
+    return {
+        "alternatives": [x for x in alts if x],
+        "meta": data.get("meta") or {
+            "upstreamParams": {
+                "mode": "regen_paragraph_vm",
+                "section_index": req.section_index,
+                "paragraph_index": req.paragraph_index,
+                "ops": req.ops.model_dump(),
+            }
+        }
+    }

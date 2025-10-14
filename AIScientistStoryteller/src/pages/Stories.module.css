@@ -9,6 +9,7 @@
   display: grid;
   grid-template-rows: auto 1fr;
   align-self: start;
+  margin-bottom: 5.5em;
 }
 .centerInner { display: grid; gap: var(--sp-3); }
 
@@ -23,9 +24,9 @@
   padding-bottom: var(--sp-2);
 
   /* un solo punto-verità per l’offset sticky */
-  --sticky-gap: var(--sp-2);
+  --sticky-gap: var(--sp-3);
 
-  min-height: calc(100vh - var(--nav-h) - var(--footer-h));
+  min-height: calc(100vh - var(--nav-h) - 5em);
   align-items:flex-start;
 }
 

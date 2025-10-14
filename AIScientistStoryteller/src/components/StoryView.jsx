@@ -1,3 +1,4 @@
+// AIScientistStoryteller/src/components/StoryView.jsx
 import { useMemo } from "react";
 import styles from "./StoryView.module.css";
 
@@ -7,7 +8,11 @@ import animationData from "../assets/data.json";
 function splitIntoParagraphs(txt) {
   if (!txt) return [];
   let clean = String(txt).replace(/\r\n/g, "\n").replace(/\u00a0/g, " ").trim();
+
+  // prima prova: split su blocchi (doppio newline)
   let parts = clean.split(/\n{2,}|\r?\n\s*\r?\n/g);
+
+  // fallback: split “intelligente” su frasi se sembra un blob unico
   if (parts.length === 1) {
     parts = clean
       .split(/([.!?])\s+(?=[A-ZÀ-ÖØ-Ý])/g)
@@ -37,6 +42,10 @@ export default function StoryView({
   onSelectSection,
   onRegisterSectionEl,
   busySectionIds = [],
+
+  // opzionale: mostra badge con numero varianti disponibili per paragrafo
+  // mappa chiave `${sectionId}:${paragraphIndex}` → number
+  variantCounts = null,
 }) {
   if (!story) return <div className={styles.empty}></div>;
 
@@ -57,21 +66,23 @@ export default function StoryView({
       .filter(s => s?.visible !== false)
       .map((s, i) => {
         const id = String(s.id ?? s.sectionId ?? i);
+
         const rawText =
           (typeof s.text === "string" && s.text) ||
           (typeof s.narrative === "string" && s.narrative) ||
           "";
+
         const providedParas = Array.isArray(s.paragraphs)
           ? s.paragraphs.map(p => (typeof p === "string" ? p.trim() : "")).filter(Boolean)
           : [];
 
+        // se abbiamo 0 o 1 paragrafi lunghi → prova a risplittare
         const looksLikeSingleBlob =
           providedParas.length === 1 && (providedParas[0]?.length || 0) > 280;
 
-        const candidateText =
-          (typeof rawText === "string" && rawText.trim())
-            ? rawText
-            : providedParas.join("\n\n");
+        const candidateText = rawText?.trim()
+          ? rawText
+          : providedParas.join("\n\n");
 
         const needResplit = providedParas.length <= 1 || looksLikeSingleBlob;
         const paragraphs = needResplit
@@ -113,6 +124,7 @@ export default function StoryView({
             style={{ position: "relative" }}
             onClick={(e) => {
               if (isBusy) return;
+              // click sul vuoto della sezione → seleziona sezione
               if (e.target?.tagName?.toLowerCase() === "p") return;
               onSelectSection?.(sec.id);
             }}
@@ -133,8 +145,10 @@ export default function StoryView({
                 style={{
                   minHeight: 140,
                   display: "flex",
+                  flexDirection: "column",
                   alignItems: "center",
                   justifyContent: "center",
+                  textAlign:"center",
                   opacity: 0.9,
                 }}
               >
@@ -144,7 +158,7 @@ export default function StoryView({
                   autoplay
                   style={{ width: 120, height: 120 }}
                 />
-                <p>Generating {sec.title}...</p>
+                <p>Generation of the entire section...</p>
               </div>
             ) : (
               <>
@@ -154,14 +168,40 @@ export default function StoryView({
                     selectedParagraph.sectionId === sec.id &&
                     selectedParagraph.index === idx;
 
+                  const variantKey = `${sec.id}:${idx}`;
+                  const vCount =
+                    variantCounts && Number.isFinite(variantCounts[variantKey])
+                      ? Number(variantCounts[variantKey])
+                      : 0;
+
                   return (
-                    <p
+                    <div
                       key={idx}
-                      className={`${styles.p} ${styles.pSelectable} ${isSel ? styles.pActive : ""}`}
-                      onClick={() => onToggleParagraph?.(sec.id, idx, p)}
+                      className={styles.paragraphRow}
+                      data-section-id={sec.id}
+                      data-paragraph-index={idx}
                     >
-                      {p}
-                    </p>
+                      <p
+                        className={`${styles.p} ${styles.pSelectable} ${isSel ? styles.pActive : ""}`}
+                        onClick={() => onToggleParagraph?.(sec.id, idx, p)}
+                        tabIndex={0}
+                        aria-selected={isSel ? "true" : "false"}
+                        title="Click to select the paragraph"
+                      >
+                        {p}
+                      </p>
+
+                      {/* badge varianti opzionale */}
+                      {vCount > 0 && (
+                        <span
+                          className={styles.variantBadge}
+                          title={`${vCount} available alternatives`}
+                          aria-label={`${vCount} available alternatives`}
+                        >
+                          {vCount}
+                        </span>
+                      )}
+                    </div>
                   );
                 })}
 

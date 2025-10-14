@@ -7,7 +7,7 @@
   background: color-mix(in oklab, var(--bg-navbar) 86%, transparent);
   backdrop-filter: blur(2px);
   width: var(--container-w);
-  box-shadow: var(--glass-nav-sd);
+  border-bottom: 1px dashed var(--line-0);
 }
 
 .nav {
