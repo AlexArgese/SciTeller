@@ -767,10 +767,11 @@ function ParagraphControls({
       {!has && <div className={styles.muted}>Select a paragraph in the story to edit it here.</div>}
       {has && (
         <>
+        {/* 
           <div className={styles.row}>
             <button className={styles.ghostBtn} onClick={onReadOnPaper}>Read it on paper</button>
           </div>
-
+        */}
           <div className={styles.selectedParaBox}>
             <div className={styles.selectedMeta}>
               Section: <b>{findSectionTitle(sections, selectedParagraph.sectionId)}</b> · ¶ {selectedParagraph.index + 1}
