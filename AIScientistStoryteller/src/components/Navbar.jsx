@@ -2,7 +2,6 @@ import { NavLink, useLocation } from "react-router-dom";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import styles from "./Navbar.module.css";
 import { getMe, signOut } from "../services/authApi";
-import GooeyNav from './GooeyNav'
 
 const items = [
   { label: "New Story", href: "/" },
