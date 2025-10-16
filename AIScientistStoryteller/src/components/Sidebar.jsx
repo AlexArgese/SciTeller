@@ -54,7 +54,7 @@ export default function Sidebar({
                 <span className={styles.itemTitle}>{displayTitle(s)}</span>
 
                 <button
-                  className={styles.deleteBtn}
+                  className={`${styles.deleteBtn} ${active ? styles.deleteBtnActive : ""}`}
                   title="Delete story"
                   disabled={loading}
                   onClick={(e) => {

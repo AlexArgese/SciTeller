@@ -59,9 +59,16 @@ body::after{
 /* Container */
 .container {
   width: var(--container-w);
-  margin: calc(var(--sp-8) + var(--nav-h)) 0 var(--sp-10); /* niente auto ai lati */
-  padding-left: 0;
-  padding-right: 0;
+  margin-inline: auto;
+
+  display: flex;
+  flex-direction: column;
+
+  /* usa min-height, non height, così può crescere e la pagina scorre */
+  min-height: calc(100svh - var(--nav-h));
+
+  /* un po’ di respiro sopra/sotto, adattivo */
+  padding-block: clamp(15vh, 6vh, 64px);
 }
 
 
@@ -124,7 +131,7 @@ body::after{
 ::placeholder { color: var(--text-2); opacity: .85; }
 
 /* Route offset */
-body[data-route="home"] .container { margin-top: calc(var(--sp-7) + var(--nav-h)); }
+body[data-route="home"] .container {  }
 
 
 /* Utilities */

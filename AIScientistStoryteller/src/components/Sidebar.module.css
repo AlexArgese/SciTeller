@@ -52,7 +52,7 @@
   backdrop-filter: blur(4px);
   cursor: pointer;
   transition: background var(--dur-2) var(--ease-emph), border-color var(--dur-2) var(--ease-emph);
-  box-shadow: var(--glass-item-sd);
+  border: 1px dashed var(--line-0);
   height: 2.5em;
   width: 100%;
 }

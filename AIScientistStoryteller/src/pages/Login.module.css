@@ -4,7 +4,7 @@
   padding:clamp(18px,3vw,28px);
   background:var(--glass-bg);
   border:1px solid var(--glass-border);
-  border-radius:var(--r-xl);
+  border-radius:var(--r-sm);
   box-shadow:var(--glass-sd);
   backdrop-filter:blur(14px) saturate(130%);
   -webkit-backdrop-filter:blur(14px) saturate(130%);
@@ -19,7 +19,7 @@
 .actions{display:grid;gap:12px;margin:20px auto 10px;width:min(420px,100%)}
 .form{margin:0}
 .btn{
-  appearance:none;width:100%;padding:14px 16px;border-radius:18px;border:1px solid var(--glass-border);
+  appearance:none;width:100%;padding:14px 16px;border-radius:18px;border: 1px dashed var(--line-0);
   background:linear-gradient(180deg, rgba(255,255,255,.58), rgba(245,245,245,.42));
   box-shadow:0 12px 26px rgba(0,0,0,.10), inset 0 1px 0 rgba(255,255,255,.45);
   color:var(--text);font-weight:700;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:10px;text-decoration:none;position:relative
