@@ -56,18 +56,29 @@
 }
 
 .p { margin: 0 0 12px; text-align: justify;  }
-
 .pSelectable {
   position: relative;
   border-radius: 8px;
   padding: 2px 4px;
   transition: background var(--dur-2) var(--ease-emph), box-shadow var(--dur-2) var(--ease-emph);
 }
-.pSelectable:not(.pActive):hover {
+
+.pSelectable::before {
+  content: "";
+  position: absolute;
+  inset: -4px; /* controlla lo spazio attorno al testo */
+  border-radius: 10px;
+  background: transparent;
+  transition: background var(--dur-2) var(--ease-emph);
+  z-index: -1;
+}
+
+.pSelectable:not(.pActive):hover::before {
   background: var(--glass-bg);
   box-shadow: var(--glass-sd);
 }
-.pActive {
+
+.pActive::before {
   background: color-mix(in oklab, var(--accent) 12%, #fff);
   box-shadow: var(--glass-sd);
 }

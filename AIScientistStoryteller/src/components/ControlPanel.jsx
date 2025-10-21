@@ -1,5 +1,7 @@
+// FILE: src/components/ControlPanel.jsx
 import { useEffect, useMemo, useRef, useState, useLayoutEffect } from "react";
 import styles from "./ControlPanel.module.css";
+import VersionGraph from "./VersionGraph"
 
 export default function ControlPanel({
   open,
@@ -284,7 +286,6 @@ export default function ControlPanel({
     console.log("updatedAt:", story?.updatedAt, "createdAt:", story?.createdAt);
     console.groupEnd();
   }, [story?.id, story?.updatedAt]);
-  
 
   useEffect(() => {
     const syncScope = () => placeScopeNow();
@@ -339,7 +340,7 @@ export default function ControlPanel({
   function clearSections(){ setSelectedSectionIds([]); }
 
   const hasParagraphSelected = !!selectedParagraph;
-  const [pOps, setPOps] = useState({ paraphrase:true, simplify:false, lengthOp:"keep", temp:storyTemp, n:1 });
+  const [pOps, setPOps] = useState({ paraphrase:true, simplify:false, temp:storyTemp, n:1 });
   useEffect(() => { setPOps(p=>({ ...p, temp:storyTemp, n:clampN(p.n) })); },
     [selectedParagraph?.sectionId, selectedParagraph?.index, story?.id, storyTemp]);
 
@@ -375,7 +376,7 @@ export default function ControlPanel({
       const bits = [];
       if (o.paraphrase) bits.push("paraphrase");
       if (o.simplify) bits.push("simplify");
-      if (o.length_op && o.length_op !== "keep") bits.push(o.length_op);
+      if (o.length_preset) bits.push(`len=${o.length_preset}`);
       if (Number.isFinite(o.temperature)) bits.push(`temp=${o.temperature}`);
       if (Number.isFinite(o.n)) bits.push(`${o.n} alt`);
       return `Regenerate PARAGRAPH (${secName}, ¶${selectedParagraph.index + 1}): ${bits.join(", ")}.`;
@@ -475,10 +476,10 @@ export default function ControlPanel({
   async function setDefaultVersion(id){ if (onChange) await onChange({ defaultVersionId: id }); }
   async function openVersion(id){ if (onChange) await onChange({ currentVersionId: id, _action: "open_version" }); }
 
-  const [exportFormat, setExportFormat]   = useState("markdown");
-  const [exportHeader, setExportHeader]   = useState(true);
-  const [exportMedia,  setExportMedia]    = useState(false);
-  const [exportMeta,   setExportMeta]     = useState(true);
+  const [exportFormat, setExportFormat] = useState("markdown");
+  const [exportHeader, setExportHeader] = useState(true);
+  const [exportMedia,  setExportMedia] = useState(false);
+  const [exportMeta,   setExportMeta]  = useState(true);
   const [exportSectionIds, setExportSectionIds] = useState(()=>sections.map((s,i)=>s.id ?? s.sectionId ?? String(i)));
   useEffect(()=>{ setExportSectionIds(sections.map((s,i)=>s.id ?? s.sectionId ?? String(i))); }, [story?.id, sections.length]);
   function toggleExportSection(id){
@@ -490,13 +491,21 @@ export default function ControlPanel({
       const id = s.id ?? s.sectionId ?? String(i);
       return exportSectionIds.includes(id);
     });
-    const payload = buildExportPayload(story, selSections, { header: exportHeader, media: exportMedia, meta: exportMeta });
+    const payload = buildExportPayload(
+      story,
+      selSections,
+      { header: exportHeader,
+        // media: exportMedia,
+        meta: exportMeta } 
+    );
     if (exportFormat === "markdown") {
       const md = renderMarkdown(payload);
       downloadFile(slugify(payload.fileBase)+".md", "text/markdown;charset=utf-8", md);
     } else if (exportFormat === "html") {
       const html = renderHTML(payload);
-      downloadFile(slugify(payload.fileBase)+".html", "text/html;charset=utf-8", html);
+      const w = window.open("", "_blank");
+      if (!w) return alert("Popup blocked by the browser.");
+      w.document.open(); w.document.write(html); w.document.close();
     } else if (exportFormat === "pdf") {
       const html = renderPrintableHTML(payload);
       const w = window.open("", "_blank");
@@ -636,14 +645,21 @@ export default function ControlPanel({
 
       {/* VERSIONS */}
       {tab==="history" && (
-        <HistoryTab
-          story={story}
-          versions={versions}
-          defaultVersionId={defaultVersionId}
-          layoutVersionGraph={layoutVersionGraph}
-          setDefaultVersion={setDefaultVersion}
-          openVersion={openVersion}
-        />
+        <div className={styles.scroll}>
+          <div className={`${styles.section} ${styles.blueCard}`} style={{padding:0}}>
+            {versions.length === 0 && <div className={styles.muted}>No versions yet.</div>}
+            {versions.length>0 && (
+              <VersionGraph
+                versions={versions}
+                layoutVersionGraph={layoutVersionGraph}
+                defaultVersionId={defaultVersionId}
+                openVersion={openVersion}
+                setDefaultVersion={setDefaultVersion}
+                height={520}
+              />
+            )}
+          </div>
+        </div>
       )}
 
       {/* EXPORT */}
@@ -737,8 +753,10 @@ function SectionsControls({
             aria-label="Length preset" />
           <div className={styles.ticks3}><span>Short</span><span>Medium</span><span>Long</span></div>
         </div>
-        <div className={styles.fieldRow}><label className={styles.label}>Creativity</label><span className={styles.valueRight}>{Math.round(sectionTemp*100)}%</span></div>
-        <input className={styles.range} type="range" min={0} max={1} step={0.02} value={sectionTemp} onChange={e=>setSectionTemp(Number(e.target.value))} />
+        <div>
+          <div className={styles.fieldRow}><label className={styles.label}>Creativity</label><span className={styles.valueRight}>{Math.round(sectionTemp*100)}%</span></div>
+          <input className={styles.range} type="range" min={0} max={1} step={0.02} value={sectionTemp} onChange={e=>setSectionTemp(Number(e.target.value))} />
+        </div>
       </div>
 
       <div className={styles.actionsSticky}>
@@ -754,7 +772,7 @@ function SectionsControls({
 
 function ParagraphControls({
   story, sections, selectedParagraph,
-  pOps, setPOps, lengthPreset,
+  pOps, setPOps, lengthPreset,        // lengthPreset arriva come default “esterno”
   onReadOnPaper, onGenerate,
   variants = [],
   selectedVariantIndex, setSelectedVariantIndex,
@@ -762,19 +780,30 @@ function ParagraphControls({
 }) {
   const has = !!selectedParagraph;
 
+  // Preset di lunghezza locale per il paragrafo (allineato a Story/Sections)
+  const [pLenPreset, setPLenPreset] = useState(lengthPreset || "medium");
+  useEffect(() => {
+    // re-sync quando cambia selezione o storia
+    setPLenPreset(lengthPreset || "medium");
+  }, [lengthPreset, selectedParagraph?.index, selectedParagraph?.sectionId, story?.id]);
+
+  // util per mapping slider 0/1/2 <-> short/medium/long
+  const presetToIdx = (lp) => Math.max(0, ["short","medium","long"].indexOf(String(lp || "medium")));
+  const idxToPreset = (i) => (["short","medium","long"][Number(i)] || "medium");
+
   return (
     <div className={`${styles.section} ${styles.blueCard}`}>
       {!has && <div className={styles.muted}>Select a paragraph in the story to edit it here.</div>}
       {has && (
         <>
-        {/* 
-          <div className={styles.row}>
-            <button className={styles.ghostBtn} onClick={onReadOnPaper}>Read it on paper</button>
-          </div>
-        */}
           <div className={styles.selectedParaBox}>
-            <div className={styles.selectedMeta}>
-              Section: <b>{findSectionTitle(sections, selectedParagraph.sectionId)}</b> · ¶ {selectedParagraph.index + 1}
+            <div className={styles.rowMeta}>
+              <div className={styles.selectedMeta} style={{marginTop:"6px"}}>
+                Section: <b>{findSectionTitle(sections, selectedParagraph.sectionId)}</b> 
+              </div>
+              <div className={styles.selectedMeta} style={{fontSize:"1.5em"}}>
+                <b>¶ {selectedParagraph.index + 1}</b>
+              </div>
             </div>
             <div className={styles.selectedText}>{selectedParagraph.text}</div>
           </div>
@@ -784,35 +813,75 @@ function ParagraphControls({
             <label className={styles.label}>Operations</label>
             <div className={styles.opsRow}>
               <label className={styles.switch}>
-                <input type="checkbox" checked={pOps.paraphrase} onChange={e=>setPOps(p=>({...p, paraphrase:e.target.checked}))} />
+                <input
+                  type="checkbox"
+                  checked={pOps.paraphrase}
+                  onChange={e=>setPOps(p=>({...p, paraphrase:e.target.checked}))}
+                />
                 <span>Paraphrase</span>
               </label>
               <label className={styles.switch}>
-                <input type="checkbox" checked={pOps.simplify} onChange={e=>setPOps(p=>({...p, simplify:e.target.checked}))} />
+                <input
+                  type="checkbox"
+                  checked={pOps.simplify}
+                  onChange={e=>setPOps(p=>({...p, simplify:e.target.checked}))}
+                />
                 <span>Simplify</span>
               </label>
             </div>
 
-            <label className={styles.label}>Length</label>
-            <div className={styles.opsRow}>
-              {["keep","shorten","lengthen"].map(v=>(
-                <label key={v} className={styles.radio}>
-                  <input type="radio" name="lenop" value={v} checked={pOps.lengthOp===v} onChange={()=>setPOps(p=>({...p, lengthOp:v}))} />
-                  <span>{capFirst(v)}</span>
-                </label>
-              ))}
+            {/* Lunghezza: slider short/medium/long come negli altri tab */}
+            <div>
+              <div className={styles.fieldRow}>
+                <label className={styles.label}>Length per paragraph</label>
+                <span className={styles.valueRight}>{capFirst(pLenPreset)}</span>
+              </div>
+              <input
+                className={styles.range}
+                type="range"
+                min={0}
+                max={2}
+                step={1}
+                value={presetToIdx(pLenPreset)}
+                onChange={(e)=>setPLenPreset(idxToPreset(e.target.value))}
+                aria-label="Length preset"
+              />
+              <div className={styles.ticks3}><span>Short</span><span>Medium</span><span>Long</span></div>
             </div>
 
-            <div className={styles.fieldRow}>
-              <label className={styles.label}>Creativity</label>
-              <span className={styles.valueRight}>{Math.round((pOps.temp ?? 0)*100)}%</span>
+            {/* Creatività */}
+            <div>
+              <div className={styles.fieldRow}>
+                <label className={styles.label}>Creativity</label>
+                <span className={styles.valueRight}>{Math.round((pOps.temp ?? 0)*100)}%</span>
+              </div>
+              <input
+                className={styles.range}
+                type="range"
+                min={0}
+                max={1}
+                step={0.02}
+                value={pOps.temp}
+                onChange={e=>setPOps(p=>({...p, temp:Number(e.target.value)}))}
+              />
             </div>
-            <input className={styles.range} type="range" min={0} max={1} step={0.02}
-              value={pOps.temp} onChange={e=>setPOps(p=>({...p, temp:Number(e.target.value)}))} />
+            
 
-            <label className={styles.label}>Alternatives</label>
-            <input className={styles.input} type="number" min={1} max={3}
-              value={pOps.n} onChange={e=>setPOps(p=>({...p, n: clampN(Number(e.target.value)||1)}))} />
+            {/* Numero alternative: slider 1–3 per coerenza visiva */}
+            <div>
+              <label className={styles.label}>Alternatives</label>
+              <input
+                className={styles.range}
+                type="range"
+                min={1}
+                max={3}
+                step={1}
+                value={pOps.n}
+                onChange={(e)=>setPOps(p=>({...p, n: clampN(Number(e.target.value)||1)}))}
+                aria-label="Number of alternatives"
+              />
+              <div className={styles.ticks3}><span>1</span><span>2</span><span>3</span></div>
+            </div>
           </div>
 
           <div className={styles.actionsSticky}>
@@ -827,11 +896,10 @@ function ParagraphControls({
                   ops: {
                     paraphrase: !!pOps.paraphrase,
                     simplify: !!pOps.simplify,
-                    length_op: pOps.lengthOp,
                     temperature: clamp01(pOps.temp),
                     n: clampN(pOps.n),
                     top_p: 0.9,
-                    length_preset: lengthPreset,
+                    length_preset: pLenPreset, // ← allineato agli altri tab
                   },
                 })
               }
@@ -872,6 +940,7 @@ function ParagraphControls({
     </div>
   );
 }
+
 
 /* ---------------- Subcomponenti aggiunti ---------------- */
 
@@ -966,7 +1035,6 @@ function InfoTab({
             <div className={styles.muted}>No story selected.</div>
           ) : (
             <>
-              <div className={styles.h4}>Sections ({sections.length})</div>
               <ul className={styles.infoList}>
               {sections.map((s, idx)=> {
                   const id = s.id ?? s.sectionId ?? String(idx);
@@ -1083,65 +1151,144 @@ function ExportTab({
   sections,
   exportFormat, setExportFormat,
   exportHeader, setExportHeader,
-  exportMedia, setExportMedia,
+  // exportMedia, setExportMedia, // ← disabilitato: media non previsti ora
   exportMeta, setExportMeta,
   exportSectionIds, setExportSectionIds,
   toggleExportSection,
   handleExportClient,
 }) {
+  const total = sections.length;
+  const selectedCount = exportSectionIds.length;
+
   return (
     <div className={styles.scroll}>
       <div className={`${styles.section} ${styles.blueCard}`}>
-        <div className={styles.formGrid}>
-          <label className={styles.label}>Format</label>
-          <select className={styles.select} value={exportFormat} onChange={e=>setExportFormat(e.target.value)}>
-            <option value="markdown">Markdown (.md)</option>
-            <option value="html">HTML (.html)</option>
-            <option value="pdf">PDF (print)</option>
-          </select>
 
-          <label className={styles.label}>Header</label>
-          <label className={styles.switch}>
-            <input type="checkbox" checked={exportHeader} onChange={e=>setExportHeader(e.target.checked)} />
-            <span>Include header (title, persona, date, version)</span>
-          </label>
-
-          <label className={styles.label}>Media</label>
-          <label className={styles.switch}>
-            <input type="checkbox" checked={exportMedia} onChange={e=>setExportMedia(e.target.checked)} />
-            <span>Include media</span>
-          </label>
-
-          <label className={styles.label}>Metadata</label>
-          <label className={styles.switch}>
-            <input type="checkbox" checked={exportMeta} onChange={e=>setExportMeta(e.target.checked)} />
-            <span>Include metadata</span>
-          </label>
-        </div>
-
+        {/* --- Options ---------------------------------------------------- */}
         <div className={styles.subsection}>
-          <div className={styles.h4}>Sections to export</div>
-          <div className={styles.sectionsList}>
-            {sections.map((s, idx) => {
-              const id = s.id ?? s.sectionId ?? String(idx);
-              return (
-                <label key={id} className={`${styles.checkboxRow}`}>
-                  <input type="checkbox" checked={exportSectionIds.includes(id)} onChange={()=>toggleExportSection(id)} />
-                  <span className={styles.secTitle}>{s.title || `Section ${idx+1}`}</span>
-                </label>
-              );
-            })}
+          <div className={styles.h4}>Options</div>
+
+          <div className={styles.formGrid} style={{marginTop: 0}}>
+            {/* Format */}
+            <div>
+              <div className={styles.fieldRow}>
+                <label className={styles.label}>Format</label>
+                <span className={styles.valueRight}>
+                  {exportFormat === "markdown" ? "Markdown" :
+                   exportFormat === "html"     ? "HTML"     :
+                   exportFormat === "pdf"      ? "PDF (print)" : "-"}
+                </span>
+              </div>
+              <select
+                className={styles.select}
+                value={exportFormat}
+                onChange={e=>setExportFormat(e.target.value)}
+                aria-label="Export format"
+              >
+                <option value="markdown">Markdown (.md)</option>
+                <option value="html">HTML (.html)</option>
+                <option value="pdf">PDF (print)</option>
+              </select>
+            </div>
+
+            {/* Header */}
+            <div>
+              <div className={styles.fieldRow}>
+                <label className={styles.label}>Header</label>
+                <span className={styles.valueRight}>{exportHeader ? "Included" : "Excluded"}</span>
+              </div>
+              <label className={styles.switch}>
+                <input
+                  type="checkbox"
+                  checked={exportHeader}
+                  onChange={e=>setExportHeader(e.target.checked)}
+                />
+                <span>Include title, persona, date, version</span>
+              </label>
+            </div>
+
+            {/* Media (commentato: non previsto ora) */}
+            {/*
+            <div>
+              <div className={styles.fieldRow}>
+                <label className={styles.label}>Media</label>
+                <span className={styles.valueRight}>{exportMedia ? "Included" : "Excluded"}</span>
+              </div>
+              <label className={styles.switch}>
+                <input
+                  type="checkbox"
+                  checked={exportMedia}
+                  onChange={e=>setExportMedia(e.target.checked)}
+                />
+                <span>Include media</span>
+              </label>
+            </div>
+            */}
+
+            {/* Metadata */}
+            <div>
+              <div className={styles.fieldRow}>
+                <label className={styles.label}>Metadata</label>
+                <span className={styles.valueRight}>{exportMeta ? "Included" : "Excluded"}</span>
+              </div>
+              <label className={styles.switch}>
+                <input
+                  type="checkbox"
+                  checked={exportMeta}
+                  onChange={e=>setExportMeta(e.target.checked)}
+                />
+                <span>Include id, persona, version, timestamps</span>
+              </label>
+            </div>
+          </div>
+
+          <div className={styles.noteInfo}>
+            Export is client-side only and does not modify your story.
           </div>
         </div>
 
+        {/* --- Sections to export ---------------------------------------- */}
+        <div className={styles.subsection}>
+          <div className={styles.h4}>Sections to export</div>
+
+          <div className={styles.sectionsList}>
+            {sections.map((s, idx) => {
+              const id = s.id ?? s.sectionId ?? String(idx);
+              const title = s.title || `Section ${idx+1}`;
+              return (
+                <label key={id} className={styles.checkboxRow} title={title}>
+                  <input
+                    type="checkbox"
+                    checked={exportSectionIds.includes(id)}
+                    onChange={()=>toggleExportSection(id)}
+                    aria-label={`Toggle ${title}`}
+                  />
+                  <span className={styles.secTitle}>{title}</span>
+                </label>
+              );
+            })}
+            {total === 0 && <div className={styles.muted}>No sections.</div>}
+          </div>
+        </div>
+
+        {/* --- Sticky actions -------------------------------------------- */}
         <div className={styles.actionsSticky}>
-          <div className={styles.noteInfo}>Export is client-side only. It never changes your data.</div>
-          <button className={styles.primary} onClick={handleExportClient}>Continue</button>
+          <div className={styles.noteInfo}>
+            The exported file opens in a new tab (HTML/PDF) or downloads locally (Markdown).
+          </div>
+          <button
+            className={styles.primary}
+            onClick={handleExportClient}
+            disabled={selectedCount === 0}
+          >
+            Continue
+          </button>
         </div>
       </div>
     </div>
   );
 }
+
 
 /* ---------------- Utils ---------------- */
 function clamp01(x){ x = Number(x)||0; return Math.min(1, Math.max(0, x)); }

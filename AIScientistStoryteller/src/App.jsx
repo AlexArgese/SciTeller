@@ -6,6 +6,7 @@ import Stories from "./pages/Stories.jsx";
 import About from "./pages/About.jsx";
 import Login from "./pages/Login.jsx";
 import { useEffect } from 'react';
+import 'reactflow/dist/style.css';
 
 export default function App() {
   useEffect(() => {

@@ -110,7 +110,7 @@
   position: absolute;
   top: calc(100%);
   right: -30px;
-  background: var(--glass-bg);
+  background: var(--bg-navbar);
   border-radius: var(--r-sm);
   box-shadow: var(--glass-sd);
   backdrop-filter: blur(15px);
@@ -163,7 +163,7 @@
   width: 100%;
   padding: 10px;
   border: none;
-  background: transparent;
+  background: var(--paper-0);
   color: var(--danger);
   font-weight: 600;
   text-align: left;
@@ -175,7 +175,8 @@
 }
 
 .menuItem:hover {
-  background: color-mix(in oklab, var(--danger) 10%, var(--panel));
+  background: color-mix(in oklab, var(--danger) 90%, var(--panel));
+  color: #fff;
 }
 
 /* Confirm modal */
@@ -225,8 +226,17 @@
   border: 1px dashed var(--line-0);
 }
 
+.modalBtnGhost:hover {
+  background: var(--paper-0);
+  border: 1px dashed var(--line-0);
+}
+
 .modalBtnPrimary {
   background: var(--danger);
   color: #fff;
   border: none;
+}
+
+.modalBtnPrimary:hover{
+  background: color-mix(in oklab, var(--danger) 70%, var(--panel));
 }
