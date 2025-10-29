@@ -36,6 +36,9 @@ export default function ControlPanel({
   const indicatorRef = useRef(null);
   const posRef = useRef({ x: 0, w: 0 });
   const [cpReady, setCpReady] = useState(false);
+  function newIdemKey() {
+    return (crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`);
+  }
 
   const measureGeneric = (host, activeSel, labelSel, indicatorEl) => {
     if (!host || !indicatorEl) return null;
@@ -96,6 +99,7 @@ export default function ControlPanel({
     return byId.get(String(id)) || null;
   }
 
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const measureScopeTarget = () => {
     return measureGeneric(
       scopeTabsRef.current,
@@ -139,10 +143,22 @@ export default function ControlPanel({
   const placeScopeAfterPaint = (retries = MAX_RETRY) => {
     const tryPlace = () => {
       const ok = placeScopeNow();
-      if (!ok && retries > 0) requestAnimationFrame(() => placeScopeAfterPaint(retries - 1));
+      if (!ok && retries > 0) {
+        requestAnimationFrame(() => placeScopeAfterPaint(retries - 1));
+      } else if (!ok) {
+        // 👇 fallback
+        const host = scopeTabsRef.current;
+        const el = scopeIndicatorRef.current;
+        if (host && el) {
+          const w = Math.max(host.clientWidth / 3, MIN_W_SAFE);
+          el.style.transform = `translate3d(0px, -50%, 0)`;
+          el.style.width = `${w}px`;
+        }
+      }
     };
     requestAnimationFrame(() => requestAnimationFrame(tryPlace));
   };
+  
   const placeCpAfterPaint = (retries = MAX_RETRY) => {
     const tryPlace = () => {
       const ok = placeCpNow();
@@ -151,7 +167,6 @@ export default function ControlPanel({
     requestAnimationFrame(() => requestAnimationFrame(tryPlace));
   };
 
-  function cap(s){ return (String(s||"").charAt(0).toUpperCase() + String(s||"").slice(1)); }
   function summarizeLastPartialRegen(story){
     const lpr = story?.meta?.lastPartialRegen;
     if (!lpr) return null;
@@ -340,7 +355,6 @@ export default function ControlPanel({
     }
   }, [selectedSectionIds, story?.id, sections.length, tempDefault]);  
   useEffect(() => { setStoryPersona(personaDefault); setStoryTemp(Number(tempDefault) || 0); }, [personaDefault, tempDefault, story?.id]);
-  useEffect(() => { setSelectedSectionIds([]); setSectionTemp(storyTemp); }, [story?.id, storyTemp]);
 
   function toggleSectionSelection(id) {
     setSelectedSectionIds(prev => prev.includes(id) ? prev.filter(x=>x!==id) : [...prev, id]);
@@ -351,7 +365,7 @@ export default function ControlPanel({
   const hasParagraphSelected = !!selectedParagraph;
   const [pOps, setPOps] = useState({ paraphrase:true, simplify:false, temp:storyTemp, n:1 });
   useEffect(() => {
-    setPOps(p => ({ ...p, n: clampN(p.n) }));
+    setPOps(p => ({ ...p, n: clampN(p.n), temp: quantizeTemp01(Number(getCreativity(story?.meta))) }));
   }, [selectedParagraph?.sectionId, selectedParagraph?.index, story?.id]);
 
   const [pendingAction, setPendingAction] = useState(null);
@@ -409,32 +423,44 @@ export default function ControlPanel({
   }
   async function submitWithNotes(){
     if (!pendingAction || !onChange) return;
-    if (pendingAction.type === "sections") {
-      await onChange({
-        _action: "regenerate_sections",
-        scope: "sections",
-        sectionIds: pendingAction.payload.sectionIds,
-        temp: clamp01(pendingAction.payload?.temp ?? sectionTemp),
-        lengthPreset,
+    if (notes.trim().length < minNotesChars) return;
+    if (isSubmitting) return;                // 👈 guard anti-doppio invio
+    setIsSubmitting(true);
+    const idempotencyKey = newIdemKey();
+    try {
+      if (pendingAction.type === "sections") {
+        await onChange({
+          _action: "regenerate_sections",
+          scope: "sections",
+          sectionIds: pendingAction.payload.sectionIds,
+          temp: clamp01(pendingAction.payload?.temp ?? sectionTemp),
+          lengthPreset,
+          notes: notes.trim(),
+          storyId: story?.id,
+          currentRevisionId: story?.current_revision_id || null,
+          idempotencyKey,
+        });
+        setPendingAction(null);
+        setNotes("");
+        onClosePanel?.();
+        return;
+      }
+      const payload = {
+        _action: mapActionToCommand(pendingAction),
+        scope: pendingAction.type,
+        ...pendingAction.payload,
         notes: notes.trim(),
         storyId: story?.id,
-      });
+        currentRevisionId: story?.current_revision_id || null,
+        idempotencyKey
+      };
+      await onChange(payload);
       setPendingAction(null);
-      setNotes("");
       onClosePanel?.();
-      return;
+      setNotes("");
+    } finally {
+      setIsSubmitting(false);
     }
-    const payload = {
-      _action: mapActionToCommand(pendingAction),
-      scope: pendingAction.type,
-      ...pendingAction.payload,
-      notes: notes.trim(),
-      storyId: story?.id,
-    };
-    await onChange(payload);
-    setPendingAction(null);
-    onClosePanel?.();
-    setNotes("");
   }
 
   // ===== Varianti (ultimo batch) — RIMOSSE dal pannello =====
@@ -505,8 +531,12 @@ export default function ControlPanel({
               <button className={styles.ghostBtn} onClick={()=>setNotes(suggestNotes(pendingAction))}>Auto</button>
               <button className={styles.ghostBtn} onClick={()=>{ setPendingAction(null); setNotes(""); }}>Back</button>
             </div>
-            <button className={styles.primary} onClick={submitWithNotes} disabled={notes.trim().length < minNotesChars}>
-              Continue
+            <button
+              className={styles.primary}
+              onClick={submitWithNotes}
+              disabled={isSubmitting || notes.trim().length < minNotesChars}
+            >
+              {isSubmitting ? "Working…" : "Continue"}
             </button>
           </div>
         </div>
@@ -822,7 +852,8 @@ function ParagraphControls({
             </div>
             <button
               className={styles.primary}
-              onClick={() =>
+              onClick={() => {
+                if (!selectedParagraph) return;
                 onGenerate({
                   sectionId: selectedParagraph.sectionId,
                   paragraphIndex: selectedParagraph.index,
@@ -837,7 +868,7 @@ function ParagraphControls({
                     length_op: pLenPreset === "short" ? "shorten" : pLenPreset === "long"  ? "lengthen" : "keep",
                   },
                 })
-              }
+              }}
             >
               Continue
             </button>

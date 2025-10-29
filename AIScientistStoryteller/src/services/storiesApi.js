@@ -456,11 +456,13 @@ export async function getParagraphVariantsHistory({
   storyId,
   sectionIndex,
   paragraphIndex,
+  revisionId
 }) {
   const q = new URLSearchParams({
     storyId: String(storyId),
     sectionIndex: String(sectionIndex),
     paragraphIndex: String(paragraphIndex),
+    ...(revisionId ? { revisionId: String(revisionId) } : {}),
   }).toString();
 
   const res = await fetch(`/api/paragraph_variants?${q}`, {
@@ -489,27 +491,28 @@ export async function getParagraphVariantsHistory({
 }
 
 // 3) ADOTTA una variante già generata (commit → nuova revisione)
-export async function chooseParagraphVariant({
-  storyId,
-  batchId,
-  variantId,
-}) {
-  const res = await fetch(`/api/paragraph_variants/choose`, {
+export async function chooseParagraphVariant({ storyId, batchId, variantId, baseRevisionId }) {
+  const res = await fetch("/api/paragraph_variants/choose", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    credentials: "include",
+    credentials: "include",      // ✅ necessario per inviare cookie/sessione
     cache: "no-store",
-    body: JSON.stringify({ storyId, batchId, variantId }),
+    body: JSON.stringify({
+      storyId: String(storyId),
+      batchId: String(batchId),
+      variantId: String(variantId),
+      ...(baseRevisionId ? { baseRevisionId: String(baseRevisionId) } : {}),
+    }),
   });
 
   const raw = await res.text().catch(() => "");
-  let data; try { data = raw ? JSON.parse(raw) : {}; } catch { data = { raw }; }
+  let data;
+  try { data = raw ? JSON.parse(raw) : {}; } catch { data = { raw }; }
 
   if (!res.ok) {
     const msg = data?.error || data?.detail || `HTTP ${res.status}`;
-    throw new Error(msg);
+    throw new Error(`chooseParagraphVariant failed: ${msg}`);
   }
 
-  // ritorna la story materializzata aggiornata (così aggiorni l’editor)
   return data;
 }

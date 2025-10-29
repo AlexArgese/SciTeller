@@ -22,7 +22,7 @@ function splitIntoParagraphs(txt) {
 
 export default function StoryView({
   story,
-  selectedParagraph,         // { sectionId, index, text } | null
+  selectedParagraph,
   selectedSectionId,
   onToggleParagraph,
   onSelectSection,
@@ -32,13 +32,15 @@ export default function StoryView({
   variantCounts = null,
   onOpenCPForParagraph = () => {},
 
-  // ⬇️ NUOVA API più semplice
-  // Se il paragrafo selezionato ha delle varianti (ultimo batch), passale qui.
-  // Mostreremo un carosello inline AL POSTO del paragrafo selezionato.
-  variants = [],                      // array<string> SOLO per il paragrafo selezionato
-  inlineVariantIndex = 0,             // indice corrente del carosello
-  onSetInlineVariantIndex = () => {}, // (i:number) => void
+  // ⬇️ inline variants (ultimo batch del paragrafo selezionato)
+  variants = [],
+  inlineVariantIndex = 0,
+  onSetInlineVariantIndex = () => {},
 
+  // ⬇️ NUOVO: applicazioni locali, no-version
+  appliedOverrides = {}, // { ["<secId>:<idx>"]: "<testo applicato>" }
+  onApplyInlineVariant = () => {}, // (secId, idx, text) => void
+  onPersistInlineVariant = () => {}, // ✅ VIENE DAL PARENT (Stories)
 }) {
   if (!story) return <div className={styles.empty}></div>;
 
@@ -56,31 +58,21 @@ export default function StoryView({
 
   const sections = useMemo(() => {
     const src = Array.isArray(story.sections) ? story.sections : [];
+  
     return src
       .filter(s => s?.visible !== false)
       .map((s, i) => {
         const id = String(s.id ?? s.sectionId ?? i);
-        const rawText =
-          (typeof s.text === "string" && s.text) ||
-          (typeof s.narrative === "string" && s.narrative) ||
+  
+        // FONTE DI VERITÀ UNICA: narrative > text
+        const sourceText =
+          (typeof s.narrative === "string" && s.narrative.trim()) ||
+          (typeof s.text === "string" && s.text.trim()) ||
           "";
-
-        const providedParas = Array.isArray(s.paragraphs)
-          ? s.paragraphs.map(p => (typeof p === "string" ? p.trim() : "")).filter(Boolean)
-          : [];
-
-        const looksLikeSingleBlob =
-          providedParas.length === 1 && (providedParas[0]?.length || 0) > 280;
-
-        const candidateText = rawText?.trim()
-          ? rawText
-          : providedParas.join("\n\n");
-
-        const needResplit = providedParas.length <= 1 || looksLikeSingleBlob;
-        const paragraphs = needResplit
-          ? splitIntoParagraphs(candidateText)
-          : providedParas;
-
+  
+        // Sempre risplittare dal testo corrente
+        const paragraphs = splitIntoParagraphs(sourceText);
+  
         return {
           ...s,
           id,
@@ -88,7 +80,8 @@ export default function StoryView({
           paragraphs: paragraphs.length ? paragraphs : ["(no text)"],
         };
       });
-  }, [story]);
+  }, [story, story?.revisionId, story?.updatedAt]);
+  
 
   if (!sections.length) {
     return (
@@ -120,6 +113,9 @@ export default function StoryView({
             style={{ position: "relative" }}
             onClick={(e) => {
               if (isBusy) return;
+              // Ignora click interni al carosello
+              if (e.target?.closest?.(`.${styles.inlineCarousel}`)) return;
+              // Ignora click sul paragrafo (gestito dal suo handler)
               if (e.target?.tagName?.toLowerCase() === "p") return;
               onSelectSection?.(sec.id);
             }}
@@ -155,26 +151,21 @@ export default function StoryView({
                 {sec.paragraphs.map((p, idx) => {
                   const isSel = sel && sel.secId === sec.id && sel.idx === idx;
 
-                  const variantKey = `${sec.id}:${idx}`;
-                  const vCount =
-                    variantCounts && Number.isFinite(variantCounts[variantKey])
-                      ? Number(variantCounts[variantKey])
-                      : 0;
+                  const key = `${sec.id}:${idx}`;
 
+                  // ⬇️ se c’è un'applicazione locale, mostriamo quella
+                  const effectiveText = (appliedOverrides && appliedOverrides[key]) ? appliedOverrides[key] : p;
+
+                  const vCount = variantCounts && Number.isFinite(variantCounts[key]) ? Number(variantCounts[key]) : 0;
                   const showInlineCarousel = isSel && Array.isArray(variants) && variants.length > 0;
 
-                  // ⬇️ è in rigenerazione quel paragrafo?
-                  const isParaBusy = busyParaSet.has(`${sec.id}:${idx}`);
+                  const isParaBusy = busyParaSet.has(key);
+                  const pKey = `${sec.id}:${idx}:${(effectiveText || "").slice(0, 30)}`;
 
                   return (
-                    <div
-                      key={idx}
-                      className={styles.paragraphRow}
-                      data-section-id={sec.id}
-                      data-paragraph-index={idx}
-                    >
+                    <div key={pKey} className={styles.paragraphRow} data-section-id={sec.id} data-paragraph-index={idx}>
                       {isParaBusy ? (
-                        // ——— Loader SOLO sul paragrafo ———
+                        // loader...
                         <div className={styles.paraBusyCard}>
                           <Lottie animationData={animationData} loop autoplay style={{ width: 72, height: 72 }} />
                           <div className={styles.paraBusyText}>
@@ -184,12 +175,12 @@ export default function StoryView({
                       ) : !showInlineCarousel ? (
                         <p
                           className={`${styles.p} ${styles.pSelectable} ${isSel ? styles.pActive : ""}`}
-                          onClick={() => onToggleParagraph?.(sec.id, idx, p)}
+                          onClick={() => onToggleParagraph?.(sec.id, idx, effectiveText)}
                           tabIndex={0}
                           aria-selected={isSel ? "true" : "false"}
                           title="Click to modify or view alternatives"
                         >
-                          {p}
+                          {effectiveText}
                         </p>
                       ) : (
                         <InlineParagraphCarousel
@@ -198,27 +189,26 @@ export default function StoryView({
                           onPrev={() => onSetInlineVariantIndex((inlineVariantIndex - 1 + variants.length) % variants.length)}
                           onNext={() => onSetInlineVariantIndex((inlineVariantIndex + 1) % variants.length)}
                           onClickText={(e) => {
-                            // evita che il click selezioni la section
                             e?.stopPropagation?.();
-                            // toggle: se è già selezionato, questo lo deseleziona
+                            onToggleParagraph?.(sec.id, idx, null); // chiude il carosello
+                          }}
+                          onApplyPersist={(i) => {
+                            // 1) applica localmente (preview immediata)
+                            const chosen = variants[i];
+                            const chosenText = (typeof chosen === "string") ? chosen : (chosen?.text ?? "");
+                            if (chosenText) onApplyInlineVariant?.(sec.id, idx, chosenText);
+
+                            // 2) delega il salvataggio (crea/adotta revisione)
+                            onPersistInlineVariant?.(i);
+
+                            // 3) chiudi il carosello (deseleziona)
                             onToggleParagraph?.(sec.id, idx, null);
                           }}
                         />
                       )}
-
-                      {vCount > 0 && !showInlineCarousel && !isParaBusy && (
-                        <span
-                          className={styles.variantBadge}
-                          title={`${vCount} available alternatives`}
-                          aria-label={`${vCount} available alternatives`}
-                        >
-                          {vCount}
-                        </span>
-                      )}
                     </div>
                   );
                 })}
-
                 {sec.hasImage && <div className={styles.imageBox}>Image or table</div>}
               </>
             )}
@@ -232,20 +222,59 @@ export default function StoryView({
 /* ─────────────────────────────
    Carosello inline minimal con frecce
    ───────────────────────────── */
-   function InlineParagraphCarousel({ items = [], index = 0, onPrev, onNext, onClickText }) {
-    const text = items[index] ?? "";
+   function InlineParagraphCarousel({
+    items = [],
+    index = 0,
+    onPrev,
+    onNext,
+    onClickText,        // chiude il carosello (toggle paragrafo)
+    onApply,            // legacy (applicazione locale)
+    onApplyPersist,     // salva su backend (parent fa tutto)
+  }) {
+    const cur = items[index];
+    const text = typeof cur === "string" ? cur : (cur?.text ?? "");
+  
     return (
       <div className={styles.inlineCarousel} role="group" aria-label="Paragraph alternatives">
-        <button className={styles.navBtnLeft} type="button" onClick={(e)=>{e.stopPropagation(); onPrev?.();}} aria-label="Previous alternative">‹</button>
+        <button
+          className={styles.navBtnLeft}
+          type="button"
+          onClick={(e)=>{ e.stopPropagation(); onPrev?.(); }}
+          aria-label="Previous alternative"
+        >‹</button>
+  
         <div
           className={styles.inlineCard}
           onClick={(e)=>{ e.stopPropagation(); onClickText?.(e); }}
           title="Click to deselect this paragraph"
         >
+          <button
+            type="button"
+            className={styles.selectBadge}
+            onClick={(e)=>{ 
+              e.stopPropagation();
+              if (typeof onApplyPersist === "function") {
+                onApplyPersist(index);   // <-- delega al parent (nessun accesso a variantHistory qui)
+              } else {
+                onApply?.();             // fallback locale
+              }
+            }}
+            aria-label="Select this alternative"
+            title="Select this alternative"
+          >
+            ✓
+          </button>
+  
           <div className={styles.inlineIndex}>#{index + 1}/{items.length}</div>
           <div className={styles.inlineText}>{text}</div>
         </div>
-        <button className={styles.navBtn} type="button" onClick={(e)=>{e.stopPropagation(); onNext?.();}} aria-label="Next alternative">›</button>
+  
+        <button
+          className={styles.navBtn}
+          type="button"
+          onClick={(e)=>{ e.stopPropagation(); onNext?.(); }}
+          aria-label="Next alternative"
+        >›</button>
       </div>
     );
-  }
+  }  

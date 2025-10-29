@@ -1,4 +1,4 @@
-// VersionGraph.jsx — Linear (35→1) + indent inverso (recenti a sinistra) + connettori curvi con offsetParent (stabili)
+// VersionGraph.jsx — Linear (35→1) + indent inverso + rami "ReactFlow-like" (curve morbide) con colore unico
 import React, { useMemo, useRef, useLayoutEffect, useEffect, useState } from "react";
 
 /* =============== Utils =============== */
@@ -49,7 +49,7 @@ function scrollIntoViewWithin(container, target, { align = "start", behavior = "
   container.scrollTo({ top, behavior });
 }
 
-/* Somma gli offsetLeft/Top fino ad un ancestor (es. .vg-canvas) */
+/* Somma offsetLeft/Top fino ad ancestor (.vg-canvas) */
 function offsetToAncestor(node, ancestor){
   let x = 0, y = 0;
   let el = node;
@@ -59,17 +59,6 @@ function offsetToAncestor(node, ancestor){
     el = el.offsetParent;
   }
   return { x, y };
-}
-
-/* Punto di ancoraggio su una card: left/center oppure right/center */
-function anchorOf(cardEl, canvasEl, side /* "left" | "right" */){
-  const { x, y } = offsetToAncestor(cardEl, canvasEl);
-  const w = cardEl.offsetWidth;
-  const h = cardEl.offsetHeight;
-  return {
-    x: side === "right" ? x + w : x,
-    y: y + h/2
-  };
 }
 
 /* =============== Component =============== */
@@ -82,10 +71,11 @@ export default function VersionGraph({
   openVersion,
   cardWidth = 300,
 }) {
-  const palette = ["#1E3A8A","#244393","#2B4FA5","#3560C0","#4070D8","#4C80EE","#5A8FFD"];
+  // Colore unico per tutto (rami, dot, bordi); usa --accent se definito
+  const EDGE_COLOR = "#1E3A8A";
 
   const scrollRef  = useRef(null);    // contenitore scrollabile
-  const canvasRef  = useRef(null);    // sistema di riferimento (pos:relative)
+  const canvasRef  = useRef(null);    // sistema di riferimento
   const cardRefs   = useRef(new Map());
   const [edges, setEdges] = useState([]);
 
@@ -114,7 +104,7 @@ export default function VersionGraph({
     return m;
   }, [itemsDesc]);
 
-  // profondità genealogica
+  // profondità genealogica (per indent inverso)
   const depthOf = useMemo(() => {
     const memo = new Map();
     const visiting = new Set();
@@ -134,23 +124,26 @@ export default function VersionGraph({
 
   const maxDepth = Math.max(...depthOf.values(), 0);
 
-  // colori per catena (semplice propagazione)
+  // Colore unico per tutti i nodi
   const colorOf = useMemo(() => {
     const m = new Map();
-    let i = 0;
-    for (const v of itemsDesc) {
-      const p = v?.meta?.parentRevisionId;
-      if (p && m.has(p)) m.set(v.id, m.get(p));
-      else { m.set(v.id, palette[i % palette.length]); i++; }
-    }
+    for (const v of itemsDesc) m.set(v.id, EDGE_COLOR);
     return m;
   }, [itemsDesc]);
 
-  /* ---- Calcolo edges con coordinate stabili nella canvas ---- */
+  /* ---- Calcolo edges: curve "ReactFlow-like" ma con start/end esatti ----
+     Per ogni parent→child:
+     - x = right del child (attacco verticale sulla colonna del figlio)
+     - yTop   = top del parent  (angolo in alto a dx del parent)
+     - yBottom= bottom del child (angolo in basso a dx del child)
+     Path: M x,yTop  C x+k,yTop  x+k,yBottom  x,yBottom
+     → piccola “pancia” verso destra che arrotonda l’attaccatura.
+  */
   const recalcEdges = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
+    const k = 18; // raggio/ampiezza curva laterale (regola qui lo “stile ReactFlow”)
     const next = [];
     for (const v of itemsDesc) {
       const childId = v.id;
@@ -161,24 +154,24 @@ export default function VersionGraph({
       const parentEl = cardRefs.current.get(parentId);
       if (!childEl || !parentEl) continue;
 
-      const a = anchorOf(childEl,  canvas, "right"); // uscita dal figlio (dx)
-      const b = anchorOf(parentEl, canvas, "left");  // ingresso nel parent (sx)
+      const pc = offsetToAncestor(parentEl, canvas);
+      const cc = offsetToAncestor(childEl,  canvas);
 
-      // curva di Bezier orizzontale morbida
-      const dx = Math.max(48, Math.min(160, (b.x - a.x) * 0.6));
-      const c1x = a.x + dx, c1y = a.y;
-      const c2x = b.x - dx, c2y = b.y;
+      const x  = cc.x + childEl.offsetWidth;   // colonna destra del child (stessa per start/end)
+      const yTop    = pc.y;                          // top del parent
+      const yBottom = cc.y + childEl.offsetHeight - 6;   // bottom del child
+
+      const d = `M ${x},${yTop} C ${x+k},${yTop} ${x+k},${yBottom} ${x},${yBottom}`;
 
       next.push({
         key: `${childId}->${parentId}`,
-        d: `M ${a.x},${a.y} C ${c1x},${c1y} ${c2x},${c2y} ${b.x},${b.y}`,
-        color: colorOf.get(childId) || "var(--accent,#4C80EE)",
+        d,
+        color: EDGE_COLOR,
       });
     }
     setEdges(next);
   };
 
-  // rAF due volte per essere sicuri che i ref siano pronti e il layout stabilizzato
   const recalcSoon = () => {
     requestAnimationFrame(() => requestAnimationFrame(recalcEdges));
   };
@@ -208,11 +201,10 @@ export default function VersionGraph({
 
   useEffect(() => { recalcSoon(); });
 
-  // dimensioni canvas = dimensioni del contenuto (ul è width:max-content)
+  // dimensioni canvas per lo svg
   const canvasSize = (() => {
     const el = canvasRef.current;
     if (!el) return { w: 0, h: 0 };
-    // lo svg deve coprire almeno tutta l'area occupata dalla lista
     const list = el.querySelector(".vg-root");
     const w = Math.max(el.clientWidth,  list?.scrollWidth  || 0);
     const h = Math.max(el.clientHeight, list?.scrollHeight || 0);
@@ -232,6 +224,7 @@ export default function VersionGraph({
         marginRight: 12,
         ["--vg-card-w"]: `${cardWidth}px`,
         ["--vg-indent"]: "28px",
+        ["--accent"]: "#1E3A8A",
       }}
     >
       <div ref={canvasRef} className="vg-canvas" style={{ position:"relative", width:"max-content" }}>
@@ -257,7 +250,7 @@ export default function VersionGraph({
             border-radius:12px;
             padding:12px;
             box-shadow:0 1px 2px rgba(0,0,0,.04);
-            border-left:4px solid var(--accent,#0ea5e9);
+            border-left:4px solid var(--accent,#2457ff); /* colore unico */
             width:var(--vg-card-w,420px);
             max-width:none;
             box-sizing:border-box;
@@ -266,17 +259,17 @@ export default function VersionGraph({
             margin-left:calc((var(--vg-maxdepth,0) - var(--vg-depth,0)) * var(--vg-indent,28px));
           }
           .vg-card--fav{
-            background:color-mix(in oklab,var(--vg-flash,#0ea5e9) 6%,#fff);
+            background:color-mix(in oklab,var(--vg-flash,#2457ff) 6%,#fff);
           }
 
           .vg-head{display:flex;align-items:center;gap:10px;}
-          .vg-dot{width:10px;height:10px;border-radius:5px;box-shadow:inset 0 0 0 1px rgba(0,0,0,.08);}
+          .vg-dot{width:10px;height:10px;border-radius:50%;box-shadow:inset 0 0 0 1px rgba(0,0,0,.08); background: var(--accent,#2457ff);} /* colore unico */
           .vg-title{flex:1;font:700 14px/1.3 system-ui;color:#111;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
           .vg-star{font-size:18px;background:none;border:none;cursor:pointer;line-height:1;padding:0;margin:0;user-select:none;}
-          .vg-star--on{color:var(--accent,#0ea5e9);}
+          .vg-star--on{color:var(--accent,#2457ff);}
           .vg-star--off{color:rgba(0,0,0,.35);}
           .vg-meta{margin-top:6px;font:11px/1.4 system-ui;color:#666;display:flex;gap:8px;flex-wrap:wrap;}
-          .vg-parentlink{border:1px dashed rgba(0,0,0,.12);background:linear-gradient(#fdfdfd,#f8f8f8);color:#222;padding:4px 8px;border-radius:999px;cursor:pointer;font:12px/1.1 system-ui;}
+          .vg-parentlink{border:1px dashed rgba(0,0,0,.12);background:linear-gradient(#fdfdfd,#f8f8f8);color:#222;border-radius:999px;cursor:pointer;font:12px/1.1 system-ui;}
           .vg-notes{margin-top:8px;font:12px/1.5 system-ui;color:#222;}
           .vg-flash{animation:vgBgFlash 1s ease;}
           @keyframes vgBgFlash{0%{background-color:color-mix(in oklab,var(--vg-flash) 18%,#fff);}100%{background-color:#fff;}}
@@ -284,7 +277,7 @@ export default function VersionGraph({
           .vg-edges{position:absolute; left:0; top:0; z-index:1; pointer-events:none;}
         `}</style>
 
-        {/* Layer connettori dentro la canvas (coordinate = offset verso canvas) */}
+        {/* Layer connettori: curve morbide (start/end precisi) */}
         <svg
           className="vg-edges"
           width={canvasSize.w}
@@ -310,7 +303,7 @@ export default function VersionGraph({
             const id = v.id;
             const parentId = v?.meta?.parentRevisionId;
             const isDefault = id === defaultVersionId;
-            const color = colorOf.get(id) || "var(--accent,#0ea5e9)";
+            const color = EDGE_COLOR; 
             const depth = depthOf.get(id) || 0;
             const versionLabel = `Version ${versionNumberOf.get(id) || "?"}`;
             const originalTitle = v?.meta?.aiTitle || v?.title || v?.id;
@@ -332,7 +325,7 @@ export default function VersionGraph({
                   title={originalTitle ? `Original: ${originalTitle}` : versionLabel}
                 >
                   <div className="vg-head">
-                    <div className="vg-dot" style={{ background: color }} />
+                    <div className="vg-dot" />
                     <div className="vg-title">{versionLabel}</div>
                     <button
                       className={`vg-star ${isDefault ? "vg-star--on" : "vg-star--off"}`}

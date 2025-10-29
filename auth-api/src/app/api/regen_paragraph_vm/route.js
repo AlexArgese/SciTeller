@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { db, Schema } from "@/db/index.js";
 import { and, desc, eq } from "drizzle-orm";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 
 const { paragraphVariantBatches, paragraphVariants, stories, storyRevisions } = Schema;
 
@@ -69,7 +69,40 @@ function materialize(story, rev) {
     meta: rev?.meta ?? null,
     sections,
     content: rev?.content ?? null,
+    notes: rev?.notes ?? null, // esposto per retrocompatibilità UI
   };
+}
+
+/* ----------------- idempotenza ----------------- */
+function buildRequestFingerprint({
+  storyId, baseRevisionId, sectionIndex, paragraphIndex, paragraphText,
+  temp, top_p, lengthPreset, paraphrase, simplify, lengthOp, n
+}) {
+  const payload = {
+    storyId, baseRevisionId, sectionIndex, paragraphIndex,
+    paragraphText, temp, top_p, lengthPreset, paraphrase, simplify, lengthOp, n
+  };
+  const s = JSON.stringify(payload);
+  return createHash("sha256").update(s).digest("hex");
+}
+
+async function findRecentRevisionByFingerprint(storyId, fingerprint) {
+  if (!fingerprint) return null;
+  const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000);
+  const rows = await db
+    .select()
+    .from(storyRevisions)
+    .where(eq(storyRevisions.storyId, storyId))
+    .orderBy(desc(storyRevisions.createdAt))
+    .limit(10);
+
+  for (const r of rows) {
+    const f = r?.meta?.lastParagraphEdit?.requestKey || r?.meta?.lastParagraphEdit?.fingerprint;
+    if (f && f === fingerprint && new Date(r.createdAt) > twoMinutesAgo) {
+      return r;
+    }
+  }
+  return null;
 }
 
 /* -------------------- helpers contenuto -------------------- */
@@ -219,7 +252,7 @@ export async function POST(req) {
   const lengthPreset = String(body?.lengthPreset || body?.knobs?.lengthPreset || "medium");
   const paraphrase = !!body?.paraphrase;
   const simplify = !!body?.simplify;
-  let lengthOp = (body?.lengthOp || "keep"); // default
+  let lengthOp = (body?.lengthOp || "keep");
   if (lengthOp === "keep") {
     if (lengthPreset === "short") {
       lengthOp = "shorten";
@@ -229,7 +262,35 @@ export async function POST(req) {
   }
   const n = Math.max(1, Math.min(3, Number(body?.n || 1)));
 
-  // === prepara la sezione/paragrafi
+  // idempotency key
+  const clientKey = typeof body?.idempotencyKey === "string" ? body.idempotencyKey : null;
+  const fingerprint = clientKey || buildRequestFingerprint({
+    storyId: s.id,
+    baseRevisionId: prevRev?.id || null,
+    sectionIndex,
+    paragraphIndex,
+    paragraphText,
+    temp, top_p, lengthPreset, paraphrase, simplify, lengthOp, n
+  });
+
+  const existing = await findRecentRevisionByFingerprint(s.id, fingerprint);
+  if (existing) {
+    const [updatedSame] = await db
+      .update(stories)
+      .set({ currentRevisionId: existing.id, updatedAt: new Date() })
+      .where(eq(stories.id, s.id))
+      .returning();
+
+    return NextResponse.json(
+      {
+        ...materialize(updatedSame, existing),
+        lastParagraphVariantBatch: null,
+      },
+      { status: 200 }
+    );
+  }
+
+  // prepara payload
   const sectionObj = normSections[sectionIndex];
 
   let paragraphs = Array.isArray(sectionObj?.paragraphs) && sectionObj.paragraphs.length > 0
@@ -255,35 +316,30 @@ export async function POST(req) {
     return NextResponse.json({ error: "empty section paragraphs" }, { status: 400 });
   }
 
-  // payload verso il Mac backend (app.py): vuole 'text'
   const vmBody = {
-      persona: prevRev?.persona || "General Public",
-      paper_title: s?.title || "Story",
-      // ✅ compat: il backend/app.py vuole 'text'; la VM vuole 'cleaned_text'
-      text: paperText,
-      cleaned_text: paperText,
-      section: {
-        title: sectionObj?.title || `Section ${sectionIndex + 1}`,
-        paragraphs: paragraphsClean,
-      },
-      section_index: sectionIndex,
-      paragraph_index: paragraphIndex,
-      // ✅ passa i knob anche al TOP-LEVEL (così nessuno li perde)
-      temperature: (temp ?? 0.3),
-      temp:        (temp ?? 0.3),   // compat, se qualcuno legge 'temp'
-      top_p:       (top_p ?? 0.9),
-      n: Math.max(1, Math.min(3, Number(n || 1))),
-      length_preset: lengthPreset,
-      // solo le operazioni restano in ops
-      ops: {
-        paraphrase,
-        simplify,
-        length_op: lengthOp,
-      },
-    };
-  
+    persona: prevRev?.persona || "General Public",
+    paper_title: s?.title || "Story",
+    text: paperText,
+    cleaned_text: paperText,
+    section: {
+      title: sectionObj?.title || `Section ${sectionIndex + 1}`,
+      paragraphs: paragraphsClean,
+    },
+    section_index: sectionIndex,
+    paragraph_index: paragraphIndex,
+    temperature: (temp ?? 0.3),
+    temp:        (temp ?? 0.3),
+    top_p:       (top_p ?? 0.9),
+    n: Math.max(1, Math.min(3, Number(n || 1))),
+    length_preset: lengthPreset,
+    ops: {
+      paraphrase,
+      simplify,
+      length_op: lengthOp,
+    },
+  };
 
-  // ---- UNA sola POST al Mac backend: lui chiama la VM e gestisce n/seeds/schedule ----
+  // ---- chiamata alla VM ----
   let allAlternatives = [];
   try {
     const res = await fetch(`${REMOTE_GPU_URL}/api/regen_paragraph_vm`, {
@@ -305,28 +361,27 @@ export async function POST(req) {
 
     const responseData = await res.json().catch(() => ({}));
     const altListRaw = Array.isArray(responseData?.alternatives)
-        ? responseData.alternatives.map(a =>
-            typeof a === "string" ? a.trim() : (a?.text?.trim() || "")
-            )
-        : [];
+      ? responseData.alternatives.map(a =>
+          typeof a === "string" ? a.trim() : (a?.text?.trim() || "")
+        )
+      : [];
 
-    const hasCJK = (s) => /[\u3400-\u9FFF]/.test(s); // CJK Unified
+    const hasCJK = (s) => /[\u3400-\u9FFF]/.test(s);
     const trimToWords = (s, max = 110) => {
-    const words = (s || "").split(/\s+/);
-    if (words.length <= max) return s;
-    const cut = words.slice(0, max).join(" ");
-    const m = cut.match(/^[\s\S]*[.!?](?:\s|$)/);
-    return (m ? m[0] : cut).trim();
-  };
+      const words = (s || "").split(/\s+/);
+      if (words.length <= max) return s;
+      const cut = words.slice(0, max).join(" ");
+      const m = cut.match(/^[\s\S]*[.!?](?:\s|$)/);
+      return (m ? m[0] : cut).trim();
+    };
 
-  let alts = altListRaw.filter(t => t && !hasCJK(t));
-  if (!alts.length) alts = [paragraphText];
-  if (String(lengthOp) === "shorten") {
-    alts = alts.map(t => trimToWords(t, 40));
-  }
+    let alts = altListRaw.filter(t => t && !hasCJK(t));
+    if (!alts.length) alts = [paragraphText];
+    if (String(lengthOp) === "shorten") {
+      alts = alts.map(t => trimToWords(t, 40));
+    }
 
-  allAlternatives = alts;
-
+    allAlternatives = alts;
   } catch (e) {
     if (String(e?.name || "").includes("Timeout")) {
       return NextResponse.json(
@@ -381,17 +436,20 @@ export async function POST(req) {
     };
   });
 
-  // next content JSONB coerente
   const nextContentObj = {
     ...(effContentObj && typeof effContentObj === "object" ? effContentObj : {}),
     sections: nextSections,
     markdown: undefined,
   };
 
-  // meta merged con traccia dell'operazione
+  // NOTE DELL’UTENTE (stringa)
+  const userNotes = (typeof body?.notes === "string" && body.notes.trim())
+    ? body.notes.trim()
+    : null;
+
+  // meta merged con traccia operazione + MIRROR notes in meta.notes
   const mergedMeta = {
     ...(prevRev?.meta || {}),
-    parentRevisionId: prevRev?.id || null,
     lastParagraphEdit: {
       at: new Date().toISOString(),
       sectionIndex,
@@ -401,9 +459,12 @@ export async function POST(req) {
       lengthPreset,
       ops: { paraphrase, simplify, lengthOp },
       n: effectiveN,
-      notes: typeof body?.notes === "string" ? body.notes : undefined,
+      notes: userNotes || undefined,
       candidates: alternatives,
+      requestKey: fingerprint,
+      fingerprint,
     },
+    ...(userNotes ? { notes: userNotes } : {}), // <<<<<< mirror per il Control Panel
   };
 
   // inserisci nuova revisione
@@ -415,11 +476,10 @@ export async function POST(req) {
       content: nextContentObj,
       persona: prevRev?.persona || "General Public",
       meta: mergedMeta,
-      notes: (typeof body?.notes === "string" && body.notes.trim())
-        ? body.notes.trim()
-        : `Regenerate PARAGRAPH (${sectionObj?.title || `Section ${sectionIndex+1}`}, ¶${paragraphIndex+1}):` +
-            ` ${paraphrase ? "paraphrase, " : ""}${simplify ? "simplify, " : ""}` +
-            `len=${lengthPreset}, temp=${(temp ?? 0).toFixed(2)}, ${n} alt.`,
+      // tieni anche il top-level notes (utile per vecchie UIs / audit)
+      notes: userNotes || `Regenerate PARAGRAPH (${sectionObj?.title || `Section ${sectionIndex+1}`}, ¶${paragraphIndex+1}):`
+        + ` ${paraphrase ? "paraphrase, " : ""}${simplify ? "simplify, " : ""}`
+        + `len=${lengthPreset}, temp=${(temp ?? 0).toFixed(2)}, ${effectiveN} alt.`,
       createdAt: new Date(),
     })
     .returning();
