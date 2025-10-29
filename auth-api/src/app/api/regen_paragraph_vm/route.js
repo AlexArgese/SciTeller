@@ -5,11 +5,10 @@ import { db, Schema } from "@/db/index.js";
 import { and, desc, eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 
-
 const { paragraphVariantBatches, paragraphVariants, stories, storyRevisions } = Schema;
 
-const REMOTE_GPU_URL = process.env.REMOTE_GPU_URL || "";
-const REMOTE_API_KEY = process.env.REMOTE_API_KEY || "";
+const REMOTE_GPU_URL = (process.env.REMOTE_GPU_URL || "").replace(/\/$/, "");
+const REMOTE_API_KEY = process.env.REMOTE_API_KEY || process.env.REMOTE_APIKEY || "";
 
 /* -------------------- helpers DB -------------------- */
 async function loadOwnedStory(userId, storyId) {
@@ -77,10 +76,8 @@ function materialize(story, rev) {
 function splitIntoParagraphs(txt) {
   const s = (txt || "").toString().replace(/\r\n/g, "\n").trim();
   if (!s) return [];
-  // prima: prova split su paragrafi (doppio newline)
   let parts = s.split(/\n{2,}|\r?\n\s*\r?\n/g).map(t => t.trim()).filter(Boolean);
   if (parts.length <= 1) {
-    // fallback: spezza per frasi
     parts = s
       .split(/([.!?])\s+(?=[A-ZÀ-ÖØ-Ý])/g)
       .reduce((acc, chunk, i, arr) => {
@@ -194,18 +191,17 @@ export async function POST(req) {
 
   let paragraphIndex = Number(
     body?.paragraphIndex ?? body?.index ?? body?.paragraph_index
-  );  
+  );
   const sec = normSections[sectionIndex];
   if (!Number.isInteger(paragraphIndex) || paragraphIndex < 0 || paragraphIndex >= sec.paragraphs.length) {
     return NextResponse.json({ error: "invalid paragraph index" }, { status: 400 });
   }
-  // 👉 risolvi sempre un sectionId “visibile” (stringa non nulla)
   const sectionIdVisible =
     (typeof sec?.id !== "undefined" && String(sec.id)) ||
     (typeof sec?.sectionId !== "undefined" && String(sec.sectionId)) ||
     String(sectionIndex);
 
-  // paragrafo corrente (se arriva body.text lo preferiamo come ground-truth)
+  // paragrafo corrente
   const paragraphText =
     (typeof body?.text === "string" && body.text.trim()) ||
     sec.paragraphs[paragraphIndex] ||
@@ -219,95 +215,118 @@ export async function POST(req) {
 
   // knobs & ops
   const temp = Number(body?.temp ?? body?.knobs?.temp ?? 0.0) || 0.0;
-  const top_p = Number(body?.knobs?.top_p ?? 0.9) || 0.9;
-  const lengthPreset =
-    String(body?.lengthPreset || body?.knobs?.lengthPreset || "medium");
+  const top_p = Number(body?.top_p ?? body?.knobs?.top_p ?? 0.9) || 0.9;
+  const lengthPreset = String(body?.lengthPreset || body?.knobs?.lengthPreset || "medium");
   const paraphrase = !!body?.paraphrase;
   const simplify = !!body?.simplify;
-  const lengthOp = (body?.lengthOp || "keep"); // keep | shorten | lengthen
+  let lengthOp = (body?.lengthOp || "keep"); // default
+  if (lengthOp === "keep") {
+    if (lengthPreset === "short") {
+      lengthOp = "shorten";
+    } else if (lengthPreset === "long") {
+      lengthOp = "lengthen";
+    }
+  }
   const n = Math.max(1, Math.min(3, Number(body?.n || 1)));
 
-  // payload verso GPU-backend
+  // === prepara la sezione/paragrafi
+  const sectionObj = normSections[sectionIndex];
+
+  let paragraphs = Array.isArray(sectionObj?.paragraphs) && sectionObj.paragraphs.length > 0
+    ? sectionObj.paragraphs.filter(Boolean)
+    : splitIntoParagraphs(sectionObj?.text || sectionObj?.narrative || "");
+
+  if (paragraphIndex >= paragraphs.length) {
+    paragraphIndex = Math.max(0, paragraphs.length - 1);
+  }
+
+  const paragraphsClean = paragraphs.map((p) => {
+    try {
+      const o = JSON.parse(p);
+      if (o && Array.isArray(o.alternatives) && o.alternatives[0]?.text) {
+        return String(o.alternatives[0].text).trim();
+      }
+    } catch {}
+    return String(p).trim();
+  });
+
+  if (!paragraphsClean.length) {
+    console.error("[regen_paragraph_vm] No paragraphs to regenerate", sectionObj);
+    return NextResponse.json({ error: "empty section paragraphs" }, { status: 400 });
+  }
+
+  // payload verso il Mac backend (app.py): vuole 'text'
   const vmBody = {
-    persona: prevRev?.persona || "General Public",
-    paper_title: s?.title || "Story",
-    cleaned_text: paperText,
-    section_index: sectionIndex,
-    paragraph_index: paragraphIndex,
-    paragraph_text: paragraphText,
-    ops: {
-      paraphrase,
-      simplify,
-      length_op: lengthOp,
-      temperature: temp,
-      top_p,
-      n,
+      persona: prevRev?.persona || "General Public",
+      paper_title: s?.title || "Story",
+      // ✅ compat: il backend/app.py vuole 'text'; la VM vuole 'cleaned_text'
+      text: paperText,
+      cleaned_text: paperText,
+      section: {
+        title: sectionObj?.title || `Section ${sectionIndex + 1}`,
+        paragraphs: paragraphsClean,
+      },
+      section_index: sectionIndex,
+      paragraph_index: paragraphIndex,
+      // ✅ passa i knob anche al TOP-LEVEL (così nessuno li perde)
+      temperature: (temp ?? 0.3),
+      temp:        (temp ?? 0.3),   // compat, se qualcuno legge 'temp'
+      top_p:       (top_p ?? 0.9),
+      n: Math.max(1, Math.min(3, Number(n || 1))),
       length_preset: lengthPreset,
-    },
-  };
+      // solo le operazioni restano in ops
+      ops: {
+        paraphrase,
+        simplify,
+        length_op: lengthOp,
+      },
+    };
+  
 
-  // 5) POST alla VM
-  let vmRes;
+  // ---- UNA sola POST al Mac backend: lui chiama la VM e gestisce n/seeds/schedule ----
+  let allAlternatives = [];
   try {
-    const REMOTE_GPU_URL = (process.env.REMOTE_GPU_URL || "").replace(/\/$/, "");
-    if (!REMOTE_GPU_URL) {
-    return NextResponse.json({ error: "GPU URL not configured" }, { status: 503 });
-    }
-
-    const section = normSections[sectionIndex];
-
-    let paragraphs = [];
-    if (Array.isArray(section?.paragraphs) && section.paragraphs.length > 0) {
-        paragraphs = section.paragraphs.filter(Boolean);
-    } else {
-        paragraphs = splitIntoParagraphs(section?.text || section?.narrative || "");
-    }
-
-    // se l'indice richiesto è fuori range, rientra forzatamente
-    if (paragraphIndex >= paragraphs.length) {
-        paragraphIndex = Math.max(0, paragraphs.length - 1);
-    }
-
-
-    if (!paragraphs.length) {
-        return NextResponse.json({ error: "empty section paragraphs" }, { status: 400 });
-    }
-
-    console.log("🚨 DEBUG PARAGRAPH REGEN", {
-        section_index: sectionIndex,
-        paragraph_index: paragraphIndex,
-        paragraphs_count: paragraphs.length,
-        first_paragraph: paragraphs[0]?.slice(0, 60),
-      });
-
-    vmRes = await fetch(`${REMOTE_GPU_URL.replace(/\/$/, '')}/api/regen_paragraph_vm`, {
-    method: "POST",
-    headers: {
+    const res = await fetch(`${REMOTE_GPU_URL}/api/regen_paragraph_vm`, {
+      method: "POST",
+      headers: {
         "Content-Type": "application/json",
         ...(REMOTE_API_KEY ? { "X-API-Key": REMOTE_API_KEY } : {}),
-    },
-    body: JSON.stringify({
-        persona: prevRev?.persona || "General Public",
-        paper_title: s?.title || "Story",
-        text: paperText,  
-        section: {
-            title: section?.title || `Section ${sectionIndex + 1}`,
-            paragraphs,
-        },
-        section_index: sectionIndex,
-        paragraph_index: paragraphIndex,
-        ops: {
-            paraphrase,
-            simplify,
-            length_op: lengthOp,
-        },
-        temperature: temp,
-        top_p,
-        n,
-    }),
-    cache: "no-store",
-    signal: AbortSignal.timeout(12 * 60 * 1000),
+      },
+      body: JSON.stringify(vmBody),
+      cache: "no-store",
+      signal: AbortSignal.timeout(12 * 60 * 1000),
     });
+
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      console.error(`[VM PARAGRAPH REGEN] failed`, res.status, detail);
+      return NextResponse.json({ error: "Upstream error", detail }, { status: res.status });
+    }
+
+    const responseData = await res.json().catch(() => ({}));
+    const altListRaw = Array.isArray(responseData?.alternatives)
+        ? responseData.alternatives.map(a =>
+            typeof a === "string" ? a.trim() : (a?.text?.trim() || "")
+            )
+        : [];
+
+    const hasCJK = (s) => /[\u3400-\u9FFF]/.test(s); // CJK Unified
+    const trimToWords = (s, max = 110) => {
+    const words = (s || "").split(/\s+/);
+    if (words.length <= max) return s;
+    const cut = words.slice(0, max).join(" ");
+    const m = cut.match(/^[\s\S]*[.!?](?:\s|$)/);
+    return (m ? m[0] : cut).trim();
+  };
+
+  let alts = altListRaw.filter(t => t && !hasCJK(t));
+  if (!alts.length) alts = [paragraphText];
+  if (String(lengthOp) === "shorten") {
+    alts = alts.map(t => trimToWords(t, 40));
+  }
+
+  allAlternatives = alts;
+
   } catch (e) {
     if (String(e?.name || "").includes("Timeout")) {
       return NextResponse.json(
@@ -319,51 +338,35 @@ export async function POST(req) {
     return NextResponse.json({ error: "Upstream error", detail: String(e?.message || e) }, { status: 502 });
   }
 
-  if (!vmRes.ok) {
-    let detail = "";
-    try { detail = await vmRes.text(); } catch {}
-    console.error("[VM PARAGRAPH REGEN] status", vmRes.status, "detail:", detail || "(no body)");
-    const status = vmRes.status === 422 ? 422 : 502;
-    return NextResponse.json(
-      { error: "GPU service error", detail: detail || `HTTP ${vmRes.status}` },
-      { status }
-    );
+  if (!allAlternatives.length) {
+    allAlternatives = [paragraphText];
   }
+  const maxByN = Math.max(1, Math.min(Number(n || 1), 3));
+  const alternatives = allAlternatives.slice(0, maxByN);
+  const effectiveN = alternatives.length;
 
-  const vmData = await vmRes.json().catch(() => ({}));
-  const alternatives = Array.isArray(vmData?.alternatives)
-    ? vmData.alternatives
-        .map((t) =>
-          typeof t === "string"
-            ? t.trim()
-            : (t && typeof t.text === "string" ? t.text.trim() : "")
-        )
-        .filter(Boolean)
-    : [];
+  const batchId = randomUUID();
+  await db.insert(paragraphVariantBatches).values({
+    id: batchId,
+    storyId: s.id,
+    sectionId: sectionIdVisible,
+    revisionId: prevRev?.id || null,
+    sectionIndex,
+    paragraphIndex,
+    ops: { paraphrase, simplify, lengthOp, temp, top_p, lengthPreset, n: effectiveN },
+    createdAt: new Date(),
+  });
 
-    const batchId = randomUUID();
-    
-    await db.insert(paragraphVariantBatches).values({
-        id: batchId,
-        storyId: s.id,
-        sectionId: sectionIdVisible,     
-        revisionId: prevRev?.id || null,
-        sectionIndex,
-        paragraphIndex,
-        ops: { paraphrase, simplify, lengthOp, temp, top_p, lengthPreset, n },
-        createdAt: new Date(),
-    });
-
-    const variantRows = alternatives.map((text, i) => ({
+  const variantRows = alternatives.map((text, i) => ({
     id: randomUUID(),
     batchId,
-    rank: i,       
+    rank: i,
     text,
     createdAt: new Date(),
-    }));
-    await db.insert(paragraphVariants).values(variantRows);
+  }));
+  await db.insert(paragraphVariants).values(variantRows);
 
-  // Applica la prima alternativa come scelta di default (commit immediato)
+  // Applica la prima alternativa
   const chosen = alternatives[0] || paragraphText;
 
   // costruisci nuove sections
@@ -382,12 +385,13 @@ export async function POST(req) {
   const nextContentObj = {
     ...(effContentObj && typeof effContentObj === "object" ? effContentObj : {}),
     sections: nextSections,
-    markdown: undefined, // opzionale; lo omettiamo
+    markdown: undefined,
   };
 
   // meta merged con traccia dell'operazione
   const mergedMeta = {
     ...(prevRev?.meta || {}),
+    parentRevisionId: prevRev?.id || null,
     lastParagraphEdit: {
       at: new Date().toISOString(),
       sectionIndex,
@@ -396,9 +400,9 @@ export async function POST(req) {
       top_p,
       lengthPreset,
       ops: { paraphrase, simplify, lengthOp },
-      n,
+      n: effectiveN,
       notes: typeof body?.notes === "string" ? body.notes : undefined,
-      candidates: alternatives.slice(0, 3),
+      candidates: alternatives,
     },
   };
 
@@ -411,6 +415,11 @@ export async function POST(req) {
       content: nextContentObj,
       persona: prevRev?.persona || "General Public",
       meta: mergedMeta,
+      notes: (typeof body?.notes === "string" && body.notes.trim())
+        ? body.notes.trim()
+        : `Regenerate PARAGRAPH (${sectionObj?.title || `Section ${sectionIndex+1}`}, ¶${paragraphIndex+1}):` +
+            ` ${paraphrase ? "paraphrase, " : ""}${simplify ? "simplify, " : ""}` +
+            `len=${lengthPreset}, temp=${(temp ?? 0).toFixed(2)}, ${n} alt.`,
       createdAt: new Date(),
     })
     .returning();
@@ -422,15 +431,14 @@ export async function POST(req) {
     .where(eq(stories.id, s.id))
     .returning();
 
-  // risposta compatibile con UI (materializzata)
   return NextResponse.json({
     ...materialize(updated, inserted),
     lastParagraphVariantBatch: {
       id: batchId,
       sectionIndex,
       paragraphIndex,
-      n: alternatives.length,
+      n: effectiveN,
       variantIds: variantRows.map(v => v.id),
     },
-  }, { status: 200 });  
+  }, { status: 200 });
 }

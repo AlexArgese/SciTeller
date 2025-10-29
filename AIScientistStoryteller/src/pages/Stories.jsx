@@ -9,12 +9,13 @@ import {
   getStories, getStory, createStory, updateStory, deleteStory,
   generateFromText, getRevisions, regenerateSelectedSections,
   regenerateParagraphVm,
-  // ⬇️ nuove API per varianti
+  // ⬇️ API varianti
   getParagraphVariantsHistory, chooseParagraphVariant,
 } from "../services/storiesApi.js";
 import Loading from "../components/Loading.jsx";
 
-// --- mapping sezioni selezionate (IDs visibili) -> indici assoluti nell'array sections
+/* ───────────────── helpers comuni ───────────────── */
+
 function resolveTargetsFromIds(story, sectionIds = []) {
   const all = Array.isArray(story?.sections) ? story.sections : [];
   const visible = all.map((s, i) => ({ s, i })).filter(({ s }) => s?.visible !== false);
@@ -44,7 +45,7 @@ function getPaperTextFromStory(story) {
     .join("\n\n");
 }
 
-// helper: map ID → indici ordinati
+// map ID → indici ordinati
 function idsToIndexes(sections, ids) {
   const byId = new Map(
     (sections || []).map((s, i) => [String(s?.id ?? s?.sectionId ?? i), i])
@@ -57,7 +58,7 @@ function idsToIndexes(sections, ids) {
   return idxs.sort((a, b) => a - b);
 }
 
-// helper: trova index di sezione da id
+// index di sezione da id
 function sectionIndexById(story, sectionId) {
   if (!story || !Array.isArray(story.sections)) return -1;
   return story.sections.findIndex(
@@ -89,6 +90,32 @@ function applyParagraphReplacement(story, { sectionId, paragraphIndex, newText }
   return { ...story, sections: nextSections };
 }
 
+/* ⬇️ estrai le varianti dell’ultimo batch dal meta, se coincidono con la selezione corrente */
+function lastBatchParagraphVariants(story, selectedParagraph) {
+  if (!story || !selectedParagraph) return [];
+  const lpe = story?.meta?.lastParagraphEdit;
+  if (!lpe || !Array.isArray(lpe.candidates)) return [];
+
+  const sameSection =
+    Number(lpe.sectionIndex) === sectionIndexById(story, selectedParagraph.sectionId);
+  const sameParagraph = Number(lpe.paragraphIndex) === Number(selectedParagraph.index);
+  if (!sameSection || !sameParagraph) return [];
+
+  const clean = (s) => {
+    let t = String(s || "");
+    t = t.replace(/^\s*\{[\s\S]*?\}\s*Human:.*$/i, "").trim();
+    t = t.replace(/^\s*Assistant:\s*/i, "");
+    return t.trim();
+  };
+
+  return lpe.candidates
+    .map(x => (typeof x === "string" ? x : (x && typeof x.text === "string" ? x.text : "")))
+    .map(clean)
+    .filter(Boolean);
+}
+
+/* ───────────────── component ───────────────── */
+
 export default function Stories(){
   const [stories, setStories] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
@@ -105,13 +132,15 @@ export default function Stories(){
 
   const [busySectionIds, setBusySectionIds] = useState([]);
 
-  const [regenTargets, setRegenTargets] = useState([]);
-
-  // pagina di mezzo anche durante rigenerazione
   const [isRegenerating, setIsRegenerating] = useState(false);
 
-  // ⬇️ stato per varianti
-  const [variantHistory, setVariantHistory] = useState([]); // [{batchId, createdAt, variants:[{id,text,rank,...}], ...}]
+  const [inlineVariantIndexByKey, setInlineVariantIndexByKey] = useState({}); // { "s1:0": 2, ... }
+
+  const pendingInlineChoiceRef = useRef({}); // { "s1:0": "testo alternativo scelto" }
+
+
+  // stato per varianti (storico)
+  const [variantHistory, setVariantHistory] = useState([]); // [{id, createdAt, variants:[{id,text,...}], ...}]
   const [variantLoading, setVariantLoading] = useState(false);
   const [variantError, setVariantError] = useState(null);
 
@@ -193,7 +222,7 @@ export default function Stories(){
     [stories, selectedId]
   );
 
-  // ⬇️ helpers per varianti
+  // helpers varianti: fetch storico per selezione
   async function refreshVariantsForSelection(story, sectionId, paragraphIndex) {
     setVariantError(null);
     setVariantHistory([]);
@@ -215,6 +244,16 @@ export default function Stories(){
     } finally {
       setVariantLoading(false);
     }
+  }
+
+  function openCPParagraphTab() {
+    setCpStage("paragraph");
+    if (!openCP) setOpenCP(true);
+  }
+
+  function closeCPOnAsyncStart() {
+    setCpStage("default");
+    setOpenCP(false);
   }
 
   async function handleChooseVariantFromHistory(batchId, variantId) {
@@ -250,10 +289,18 @@ export default function Stories(){
     setSelectedId(s.id);
   }
 
+  function keyFor(sectionId, index){ return `${sectionId}:${index}`; }
+
+  function setInlineIndex(sectionId, index, variantIndex){
+    setInlineVariantIndexByKey(prev => ({ ...prev, [keyFor(sectionId, index)]: variantIndex }));
+  }
+
+
   async function handleUpdate(patch) {
     if (!selectedStory) return;
 
     if (patch?._action === "regenerate_story") {
+      closeCPOnAsyncStart();
       const paperText = selectedStory?.meta?.paperText;
       if (!paperText || typeof paperText !== "string" || !paperText.trim()) {
         alert("Sorgente non disponibile per la rigenerazione.\nRicarica il PDF e rigenera da capo.");
@@ -268,23 +315,56 @@ export default function Stories(){
           (Array.isArray(selectedStory?.sections) && selectedStory.sections.length)
             ? selectedStory.sections.length
             : 5;
-        const temp  = (typeof patch.temp === "number") ? patch.temp : 0.0;
+
+        // riprendi i knob precedenti (se presenti)
+        const upstreamPrev = selectedStory?.meta?.upstreamParams || {};
+        const temp  = (typeof patch.temp === "number") ? patch.temp : Number(upstreamPrev.temp ?? 0.0);
+        const top_p = (typeof patch.top_p === "number") ? patch.top_p : Number(upstreamPrev.top_p ?? 0.9);
+
+        // retrieval knobs (se esistevano)
+        const retrKnobs = {
+          retriever:       upstreamPrev.retriever,
+          retriever_model: upstreamPrev.retriever_model,
+          k:               upstreamPrev.k,
+          max_ctx_chars:   upstreamPrev.max_ctx_chars,
+          seg_words:       upstreamPrev.seg_words,
+          overlap_words:   upstreamPrev.overlap_words,
+        };
 
         const adapted = await generateFromText({
           text: paperText,
           persona,
           limit_sections,
           temp,
-          top_p: 0.9,
+          top_p,
           title: selectedStory?.title || selectedStory?.docTitle || "Paper",
           length_preset: patch.lengthPreset || "medium",
+          ...(retrKnobs.retriever       !== undefined ? { retriever: retrKnobs.retriever }             : {}),
+          ...(retrKnobs.retriever_model !== undefined ? { retriever_model: retrKnobs.retriever_model } : {}),
+          ...(retrKnobs.k               !== undefined ? { k: retrKnobs.k }                             : {}),
+          ...(retrKnobs.max_ctx_chars   !== undefined ? { max_ctx_chars: retrKnobs.max_ctx_chars }     : {}),
+          ...(retrKnobs.seg_words       !== undefined ? { seg_words: retrKnobs.seg_words }             : {}),
+          ...(retrKnobs.overlap_words   !== undefined ? { overlap_words: retrKnobs.overlap_words }     : {}),
         });
 
         const prevMeta = selectedStory?.meta || {};
         const nextMeta = {
           ...prevMeta,
           ...(adapted?.meta || {}),
-          upstreamParams: { persona, temp, lengthPreset: patch.lengthPreset || "medium", mode: "regen_from_text" },
+          upstreamParams: {
+            persona,
+            temp,
+            top_p,
+            lengthPreset: patch.lengthPreset || "medium",
+            limit_sections,
+            ...(retrKnobs.retriever       !== undefined ? { retriever: retrKnobs.retriever }             : {}),
+            ...(retrKnobs.retriever_model !== undefined ? { retriever_model: retrKnobs.retriever_model } : {}),
+            ...(retrKnobs.k               !== undefined ? { k: retrKnobs.k }                             : {}),
+            ...(retrKnobs.max_ctx_chars   !== undefined ? { max_ctx_chars: retrKnobs.max_ctx_chars }     : {}),
+            ...(retrKnobs.seg_words       !== undefined ? { seg_words: retrKnobs.seg_words }             : {}),
+            ...(retrKnobs.overlap_words   !== undefined ? { overlap_words: retrKnobs.overlap_words }     : {}),
+            mode: "regen_from_text",
+          },
           aiTitle: adapted?.title || null,
           ...(patch?.notes ? { notes: patch.notes } : {}),
         };
@@ -332,6 +412,8 @@ export default function Stories(){
         alert("Nessuna sezione valida da rigenerare.");
         return;
       }
+
+      closeCPOnAsyncStart();
 
       const baseRevisionId = st?.current_revision_id || st?.defaultVersionId || null;
 
@@ -383,7 +465,7 @@ export default function Stories(){
     if (patch?._action === "regen_paragraph_vm") {
       const st = selectedStory;
       if (!st) return;
-
+    
       const sectionId = patch.sectionId;
       const paragraphIndex = Number(patch.paragraphIndex);
       if (sectionId === undefined || paragraphIndex === undefined || Number.isNaN(paragraphIndex)) {
@@ -391,13 +473,17 @@ export default function Stories(){
         return;
       }
 
-      setBusySectionIds([sectionId]);
-
+      closeCPOnAsyncStart();
+    
+      // ⬇️ SOLO busy sul paragrafo (non sulla sezione)
+      const k = paraKey(sectionId, paragraphIndex);
+      setBusyParagraphKeys(prev => Array.from(new Set([ ...prev, k ])));
+    
       try {
         const baseRevisionId = st?.current_revision_id || st?.defaultVersionId || null;
         const paragraphText = patch?.paragraphText || selectedParagraph?.text || "";
         const ops = patch?.ops || {};
-
+    
         const res = await regenerateParagraphVm(st.id, {
           sectionId,
           paragraphIndex,
@@ -406,22 +492,20 @@ export default function Stories(){
           ...(baseRevisionId ? { baseRevisionId } : {}),
           notes: patch?.notes || "",
         });
-
+    
         // A) backend ritorna la story già aggiornata
         if (res && Array.isArray(res.sections)) {
+          const resWithNotes =
+            (res.meta?.lastParagraphEdit?.notes)
+              ? { ...res, meta: { ...res.meta, notes: res.meta.lastParagraphEdit.notes } }
+              : res;
           let versions = [];
           try { versions = await getRevisions(st.id); } catch {}
-          const withVersions = {
-            ...res,
-            versions,
-            defaultVersionId: res?.current_revision_id || null,
-          };
+          const withVersions = { ...resWithNotes, versions, defaultVersionId: resWithNotes?.current_revision_id || null };
           setStories(prev => prev.map(s => (s.id === withVersions.id ? withVersions : s)));
 
-          // aggiorna storico varianti e apri tab "variants"
+          // aggiorna storico varianti
           await refreshVariantsForSelection(withVersions, sectionId, paragraphIndex);
-          setCpStage("variants");
-          if (!openCP) setOpenCP(true);
         }
         // B) backend ritorna solo alternative → applica la prima e salva
         else if (Array.isArray(res?.alternatives) && res.alternatives.length) {
@@ -451,24 +535,22 @@ export default function Stories(){
             };
             setStories(prev => prev.map(s => (s.id === withVersions.id ? withVersions : s)));
 
-            // aggiorna storico varianti e apri tab "variants"
             await refreshVariantsForSelection(withVersions, sectionId, paragraphIndex);
-            setCpStage("variants");
-            if (!openCP) setOpenCP(true);
           }
         }
-
-        // cleanup selezioni (teniamo però il paragrafo selezionato per mostrare il pannello varianti)
+    
+        // mantieni selezione per vedere le varianti
         setSelectedSectionId(sectionId);
         setSelectedParagraph({ sectionId, index: paragraphIndex, text: paragraphText });
       } catch (err) {
         console.error("regen_paragraph_vm failed", err);
         alert(err?.message || "Error during paragraph regeneration.");
       } finally {
-        setBusySectionIds([]);
+        // ⬇️ Pulisci busy-paragrafo
+        setBusyParagraphKeys(prev => prev.filter(x => x !== k));
       }
       return;
-    }  
+    }    
     
     if (patch?._action === "apply_paragraph_variant") {
       const st = selectedStory;
@@ -552,25 +634,57 @@ export default function Stories(){
   }
 
   function handleToggleParagraph(sectionId, index, text) {
-    const same = selectedParagraph &&
+    const same =
+      selectedParagraph &&
       selectedParagraph.sectionId === sectionId &&
       selectedParagraph.index === index;
-
+  
+    // Se stiamo deselezionando LO STESSO paragrafo e c'è una scelta pending, applicala.
+    if (same) {
+      const k = keyFor(sectionId, index);
+      const pendingText = pendingInlineChoiceRef.current[k];
+      if (pendingText && String(pendingText).trim() && String(pendingText) !== String(selectedParagraph.text)) {
+        // Applica e pulisci pending
+        (async () => {
+          await handleUpdate({
+            _action: "apply_paragraph_variant",
+            storyId: selectedStory.id,
+            sectionId,
+            paragraphIndex: index,
+            newText: String(pendingText),
+            notes: "Apply inline carousel choice on deselect",
+          });
+        })().catch(()=>{});
+      }
+      delete pendingInlineChoiceRef.current[k];
+    }
+  
     const nextSel = same ? null : { sectionId, index, text };
     setSelectedParagraph(nextSel);
     setSelectedSectionId(sectionId);
-    setCpStage("default");
-    if (!openCP) setOpenCP(true);
-
-    // carica lo storico varianti quando selezioni un paragrafo
+  
+    // Se NON è stato mai rigenerato (nessuna variante), apri CP su tab 'paragraph'
     if (!same && selectedStory) {
+      const lastBatch = lastBatchParagraphVariants(selectedStory, { sectionId, index });
+    
+      if (Array.isArray(lastBatch) && lastBatch.length > 0) {
+        // è stato rigenerato → mostro carosello E apro il CP tab paragraph
+        const k = keyFor(sectionId, index);
+        setInlineVariantIndexByKey(prev => (prev[k] == null ? { ...prev, [k]: 0 } : prev));
+        openCPParagraphTab();   // ⬅️ apre il CP comunque
+      } else {
+        // non rigenerato → apro il CP tab paragraph come prima
+        openCPParagraphTab();
+      }
+    
       refreshVariantsForSelection(selectedStory, sectionId, index);
     } else {
-      // se deselezioni, svuota lo storico
       setVariantHistory([]);
       setVariantError(null);
     }
   }
+    
+  
 
   function handleSelectSection(sectionId) {
     setSelectedSectionId(prev => (prev === sectionId ? null : sectionId));
@@ -604,8 +718,17 @@ export default function Stories(){
   const handleContinueNotes  = () => { setCpStage("notes"); };
   const handleContinueGlobal = () => { setSelectedParagraph(null); setSelectedSectionId(null); setCpStage("notes"); };
 
-  // comodo: genera nuove alternative e apre tab “variants”
+  // chiavi "sectionId:paragraphIndex" che sono in rigenerazione
+  const [busyParagraphKeys, setBusyParagraphKeys] = useState([]); // es: ["s1:0", "s3:2"]
+
+  function paraKey(sectionId, paragraphIndex){
+    return `${sectionId}:${paragraphIndex}`;
+  }
+
+
+  // genera nuove alternative (dal CP). La selezione avviene in StoryView.
   const handleGenerateAlternatives = async ({ sectionId, paragraphIndex, ops, notes }) => {
+    closeCPOnAsyncStart();
     await handleUpdate({
       _action: "regen_paragraph_vm",
       sectionId,
@@ -613,8 +736,6 @@ export default function Stories(){
       ops,
       notes,
     });
-    setCpStage("variants");
-    if (!openCP) setOpenCP(true);
   };
 
   const SIDEBAR_W = 300;
@@ -653,9 +774,19 @@ export default function Stories(){
     if (target) doScrollAndFlash(target, id);
   };
 
+  // opzionale: badge conteggio varianti sul paragrafo selezionato
+  const variantCounts = useMemo(() => {
+    if (!selectedParagraph) return null;
+    const key = `${selectedParagraph.sectionId}:${selectedParagraph.index}`;
+    const count = (variantHistory || []).reduce(
+      (acc, b) => acc + (Array.isArray(b.variants) ? b.variants.length : 0),
+      0
+    );
+    return { [key]: count };
+  }, [variantHistory, selectedParagraph]);
+
   const showLoadingPage = loading || isRegenerating;
 
-  // ⬇️ Quando c'è loading, NON montiamo nulla: solo la pagina Loading
   if (showLoadingPage) {
     return (
       <Loading
@@ -744,10 +875,49 @@ export default function Stories(){
                 story={selectedStory}
                 selectedParagraph={selectedParagraph}
                 selectedSectionId={selectedSectionId}
-                onToggleParagraph={handleToggleParagraph}
+                onToggleParagraph={(secId, idx, originalText) => {
+                  handleToggleParagraph(secId, idx, originalText);
+                }}
                 onSelectSection={handleSelectSection}
                 onRegisterSectionEl={handleRegisterSectionEl}
                 busySectionIds={busySectionIds}
+                busyParagraphKeys={busyParagraphKeys}
+                onOpenCPForParagraph={(secId, idx) => {
+                  openCPParagraphTab();
+                }}
+
+                // ⬇️ varianti (ultimo batch) SOLO per il paragrafo selezionato
+                variants={lastBatchParagraphVariants(selectedStory, selectedParagraph)}
+
+                // ⬇️ indice del carosello + setter
+                inlineVariantIndex={
+                  selectedParagraph
+                    ? (inlineVariantIndexByKey[keyFor(selectedParagraph.sectionId, selectedParagraph.index)] || 0)
+                    : 0
+                }
+                onSetInlineVariantIndex={(nextIndexOrUpdater) => {
+                  if (!selectedParagraph) return;
+                  const secId = selectedParagraph.sectionId;
+                  const idx = selectedParagraph.index;
+                  const lastBatch = lastBatchParagraphVariants(selectedStory, selectedParagraph) || [];
+                  const currentIndex =
+                    inlineVariantIndexByKey[keyFor(secId, idx)] || 0;
+                  const nextIndex = typeof nextIndexOrUpdater === "function"
+                    ? nextIndexOrUpdater(currentIndex)
+                    : nextIndexOrUpdater;
+
+                  // salva l’indice
+                  setInlineIndex(secId, idx, nextIndex);
+
+                  // salva anche il testo pending (da applicare al "deselect")
+                  const choice = lastBatch[nextIndex];
+                  if (choice) {
+                    pendingInlineChoiceRef.current[keyFor(secId, idx)] = String(choice);
+                  }
+                }}
+
+                // opzionale: badge conteggi (tuo codice originale)
+                variantCounts={variantCounts}
               />
             )}
           </div>
@@ -777,26 +947,10 @@ export default function Stories(){
             onJumpToSection={handleScrollToSection}
             onClosePanel={() => setOpenCP(false)}
 
-            // ⬇️ nuove props per varianti
-            variantHistory={variantHistory}
-            variantLoading={variantLoading}
-            variantError={variantError}
-            onRefreshVariants={async () => {
-              if (selectedStory && selectedParagraph) {
-                await refreshVariantsForSelection(
-                  selectedStory,
-                  selectedParagraph.sectionId,
-                  selectedParagraph.index
-                );
-              }
-            }}
-            onChooseVariant={handleChooseVariantFromHistory}
             onGenerateAlternatives={handleGenerateAlternatives}
-            setCpStage={setCpStage}
           />
         </>
       )}
-
     </div>
   );
 }

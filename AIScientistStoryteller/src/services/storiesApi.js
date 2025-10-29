@@ -1,5 +1,6 @@
 // AIScientistStoryteller/src/services/storiesApi.js
-const API_BASE = import.meta.env.VITE_API_BASE || "/svc";
+const API_BASE_RAW = import.meta.env.VITE_API_BASE || "/svc";
+const API_BASE = API_BASE_RAW.replace(/\/$/, ""); // niente slash finale
 
 // ---- helpers comuni ----
 async function callApi(url, opts = {}) {
@@ -233,6 +234,12 @@ export async function generateTextAndUpdateStory(storyId, args) {
         words: Number(args.words || 0) || undefined,
         limit_sections: Number(args.limit_sections || 5),
         persona: String(args.persona || "General Public"),
+        ...(args.retriever       !== undefined ? { retriever: args.retriever } : {}),
+        ...(args.retriever_model !== undefined ? { retriever_model: args.retriever_model } : {}),
+        ...(args.k               !== undefined ? { k: args.k } : {}),
+        ...(args.max_ctx_chars   !== undefined ? { max_ctx_chars: args.max_ctx_chars } : {}),
+        ...(args.seg_words       !== undefined ? { seg_words: args.seg_words } : {}),
+        ...(args.overlap_words   !== undefined ? { overlap_words: args.overlap_words } : {}),
       },
       aiTitle: adapted.title || null,
       docTitle: adapted.docTitle || null,
@@ -287,7 +294,7 @@ export async function regenerateWithOutline({
   });
 
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data?.detail || data?.error || "Failed POST /api/two_stage_story_from_outline");
+  if (!res.ok) throw new Error(data?.detail || data?.error || "Failed POST /api/regen_vm");
   return adaptTwoStageResponse(data);
 }
 
@@ -412,7 +419,7 @@ export async function regenerateParagraphVm(
     simplify: !!ops.simplify,
     lengthOp: String(ops.length_op || "keep"),
     n: Math.max(1, Math.min(3, Number(ops.n ?? 1))),
-    temp: Number(ops.temperature ?? 0.0),
+    temp: Number(ops.temp ?? 0.0),
     top_p: Number(ops.top_p ?? 0.9),
     lengthPreset: String(ops.length_preset || "medium"),
     ...(baseRevisionId ? { baseRevisionId: String(baseRevisionId) } : {}),

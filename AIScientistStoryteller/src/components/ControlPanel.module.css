@@ -263,19 +263,7 @@ input[type="checkbox"]:active{ transform: translateY(1px); }
   box-shadow: 0 0 0 4px color-mix(in oklab, var(--accent) 18%, transparent);
 }
 
-.ghostBtn{ padding: 5px 12px;
-  border-radius: 12px;
-  background: rgba(255,255,255,.58);
-  -webkit-backdrop-filter: blur(4px);
-  backdrop-filter: blur(4px);
-  cursor: pointer;
-  transition: background var(--dur-2) var(--ease-emph), border-color var(--dur-2) var(--ease-emph);
-  box-shadow: var(--glass-item-sd); height: 34px; }
-.ghostBtn:hover{
-  background: var(--glass-blue-bg);
-  box-shadow: var(--glass-blue-sd);
-  color: #fff;
-}
+
 .primary{ composes: btn btn-primary from global; height: 42px; }
 
 /* Sections list */
@@ -353,11 +341,9 @@ input[type="checkbox"]:active{ transform: translateY(1px); }
 /* pulsante “neutro” come negli altri tab (ghost) */
 .ghostBtn{
   appearance: none;
-  border: 1px solid color-mix(in oklab, var(--accent, #6aa0ff) 26%, #c9d6ff);
-  background: color-mix(in oklab, var(--accent, #6aa0ff) 6%, #ffffff);
-  color: color-mix(in oklab, var(--accent, #6aa0ff) 70%, #1f2a44);
+  border: 1px dashed var(--line-0);
   border-radius: 10px;
-  padding: 8px 12px;
+  padding: 4px 12px;
   font: inherit;
   cursor: pointer;
   transition: transform var(--dur-2, .18s) var(--ease-emph, cubic-bezier(.2,.6,.2,1)),

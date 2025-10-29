@@ -14,6 +14,8 @@ export default function ControlPanel({
   onChange,
   onJumpToSection,
   onClosePanel,
+  // 👇️ tolti: tutto ciò che riguarda variants/history/choose/apply
+  setCpStage = () => {},
 }) {
   const [scope, setScope] = useState("story"); // story | sections | paragraph
   useEffect(() => { setScope("story"); }, [story?.id]);
@@ -56,8 +58,9 @@ export default function ControlPanel({
   };
 
   function layoutVersionGraph(versions, { trunkId = null } = {}) {
-    const sorted = [...versions].sort((a,b)=> new Date(a.createdAt) - new Date(b.createdAt));
-    const byId = new Map(sorted.map(v => [v.id, v]));
+    const sortedAsc = [...versions].sort((a,b)=> new Date(a.createdAt) - new Date(b.createdAt));
+  
+    const byId = new Map(sortedAsc.map(v => [v.id, v]));
     const laneOf = new Map();
     const lastLaneUse = [];
     function firstFreeLane(excludeLane = null){
@@ -68,15 +71,14 @@ export default function ControlPanel({
       return lastLaneUse.length - 1;
     }
     const out = [];
-    for (const v of sorted) {
+    for (const v of sortedAsc) {
       const parentId = v?.meta?.parentRevisionId || null;
       const parentLane = parentId ? laneOf.get(parentId) ?? null : null;
-      let lane;
-      if (parentId && parentLane != null && lastLaneUse[parentLane] === parentId) lane = parentLane;
-      else lane = firstFreeLane(parentLane);
+      const lane = (parentId && parentLane!=null && lastLaneUse[parentLane]===parentId)
+        ? parentLane : firstFreeLane(parentLane);
       laneOf.set(v.id, lane);
       lastLaneUse[lane] = v.id;
-
+  
       let depth = 0, cur = v;
       while (cur?.meta?.parentRevisionId && byId.has(cur.meta.parentRevisionId)) {
         depth++; cur = byId.get(cur.meta.parentRevisionId);
@@ -87,6 +89,7 @@ export default function ControlPanel({
     out.sort((a,b)=> new Date(b.createdAt) - new Date(a.createdAt));
     return out;
   }
+   
 
   function findSectionById(sections, id) {
     const byId = new Map((sections||[]).map((s,i)=>[ String(s?.id ?? s?.sectionId ?? i), s ]));
@@ -176,6 +179,10 @@ export default function ControlPanel({
     document?.fonts?.ready?.then(() => placeCpAfterPaint()).catch(() => {});
   }, [open]);
 
+  const [tab, setTab] = useState("modify");
+  useEffect(() => { if (!story && tab !== "info") setTab("info"); }, [story, tab]);
+  useEffect(() => { if (open && selectedParagraph && scope !== "paragraph") setScope("paragraph"); }, [open, selectedParagraph]);
+
   useEffect(() => {
     const el = scopeIndicatorRef.current;
     if (!el) return;
@@ -221,10 +228,6 @@ export default function ControlPanel({
       if (!scopeReady) setScopeReady(true);
     };
   }, [scope, scopeReady]);
-
-  const [tab, setTab] = useState("modify");
-  useEffect(() => { if (!story && tab !== "info") setTab("info"); }, [story, tab]);
-  useEffect(() => { if (open && selectedParagraph && scope !== "paragraph") setScope("paragraph"); }, [open, selectedParagraph]);
 
   useEffect(() => {
     const el = indicatorRef.current;
@@ -302,7 +305,7 @@ export default function ControlPanel({
 
   const sections = useMemo(() => Array.isArray(story?.sections) ? story.sections : [], [story]);
   const defaultsForInfo = useMemo(() => defaultKnobsFromMeta(story?.meta), [story?.id, story?.meta]);
-  useMemo(() => aggregateStoryKnobs(sections, defaultsForInfo), [sections, defaultsForInfo]); // (tenuto per completezza)
+  useMemo(() => aggregateStoryKnobs(sections, defaultsForInfo), [sections, defaultsForInfo]);
   const personaDefault = story?.persona || story?.meta?.persona || "Student";
   const tempDefault = getCreativity(story?.meta);
   const lengthPresetDefault = getLengthPreset(story?.meta);
@@ -313,6 +316,12 @@ export default function ControlPanel({
 
   const [storyPersona, setStoryPersona] = useState(personaDefault);
   const [storyTemp,    setStoryTemp]    = useState(Number(tempDefault) || 0);
+  useEffect(() => {
+    setStoryTemp(quantizeTemp01(Number(tempDefault) || 0));
+  }, [personaDefault, tempDefault, story?.id]);
+  
+  // quando resetti le sezioni in base allo story
+  useEffect(() => { setSelectedSectionIds([]); setSectionTemp(quantizeTemp01(storyTemp)); }, [story?.id, storyTemp]);
 
   const [selectedSectionIds, setSelectedSectionIds] = useState([]);
   const [sectionTemp, setSectionTemp] = useState(storyTemp);
@@ -323,13 +332,13 @@ export default function ControlPanel({
       const effLen = (sel?.lengthPreset) || (story?.meta?.upstreamParams?.lengthPreset) || "medium";
       const effTmp = (typeof sel?.temp === "number") ? sel.temp : (Number(tempDefault) || 0);
       setLengthPreset(String(effLen));
-      setSectionTemp(Number(effTmp));
+      setSectionTemp(quantizeTemp01(Number(effTmp)));
     } else {
       const lp = story?.meta?.upstreamParams?.lengthPreset || "medium";
       setLengthPreset(lp);
-      setSectionTemp(Number(tempDefault) || 0);
+      setSectionTemp(quantizeTemp01(Number(tempDefault) || 0));
     }
-  }, [selectedSectionIds, story?.id, sections.length, tempDefault]);
+  }, [selectedSectionIds, story?.id, sections.length, tempDefault]);  
   useEffect(() => { setStoryPersona(personaDefault); setStoryTemp(Number(tempDefault) || 0); }, [personaDefault, tempDefault, story?.id]);
   useEffect(() => { setSelectedSectionIds([]); setSectionTemp(storyTemp); }, [story?.id, storyTemp]);
 
@@ -341,8 +350,9 @@ export default function ControlPanel({
 
   const hasParagraphSelected = !!selectedParagraph;
   const [pOps, setPOps] = useState({ paraphrase:true, simplify:false, temp:storyTemp, n:1 });
-  useEffect(() => { setPOps(p=>({ ...p, temp:storyTemp, n:clampN(p.n) })); },
-    [selectedParagraph?.sectionId, selectedParagraph?.index, story?.id, storyTemp]);
+  useEffect(() => {
+    setPOps(p => ({ ...p, n: clampN(p.n) }));
+  }, [selectedParagraph?.sectionId, selectedParagraph?.index, story?.id]);
 
   const [pendingAction, setPendingAction] = useState(null);
   const [notes, setNotes] = useState("");
@@ -377,7 +387,7 @@ export default function ControlPanel({
       if (o.paraphrase) bits.push("paraphrase");
       if (o.simplify) bits.push("simplify");
       if (o.length_preset) bits.push(`len=${o.length_preset}`);
-      if (Number.isFinite(o.temperature)) bits.push(`temp=${o.temperature}`);
+      if (Number.isFinite(o.temp)) bits.push(`temp=${o.temp}`);
       if (Number.isFinite(o.n)) bits.push(`${o.n} alt`);
       return `Regenerate PARAGRAPH (${secName}, ¶${selectedParagraph.index + 1}): ${bits.join(", ")}.`;
     }
@@ -389,7 +399,11 @@ export default function ControlPanel({
     }
   }, [cpStage, pendingAction]); // eslint-disable-line
   function openNotes(action, global=false){
-    setPendingAction(action);
+    const baseRevisionId = story?.current_revision_id || story?.defaultVersionId || null;
+    setPendingAction({
+      ...action,
+      payload: { ...(action?.payload||{}), ...(baseRevisionId ? { baseRevisionId } : {}) }
+    });
     setNotes(suggestNotes(action));
     (global ? onContinueGlobal : onContinueNotes)?.();
   }
@@ -423,53 +437,7 @@ export default function ControlPanel({
     setNotes("");
   }
 
-  // ===== Varianti di paragrafo (ultimo batch) =====
-  const paragraphVariants = useMemo(() => {
-    const meta = story?.meta || {};
-    const lpe  = meta.lastParagraphEdit;
-    if (!lpe || !selectedParagraph) return [];
-    const sameSection   = Number(lpe.sectionIndex) === Number(selectedParagraph.index != null ? findSectionIndexById(story?.sections, selectedParagraph.sectionId) : -1);
-    const sameParagraph = Number(lpe.paragraphIndex) === Number(selectedParagraph.index);
-    if (!sameSection || !sameParagraph) return [];
-    const raw = Array.isArray(lpe.candidates) ? lpe.candidates : [];
-    return raw
-      .map(x => {
-        if (typeof x === "string") return cleanCandidate(x);
-        if (x && typeof x.text === "string") return cleanCandidate(x.text);
-        try { return cleanCandidate(JSON.stringify(x)); } catch { return ""; }
-      })
-      .map(s => s.trim())
-      .filter(Boolean);
-  }, [story?.meta?.lastParagraphEdit, selectedParagraph, story?.sections]);
-
-  const [selectedVariantIndex, setSelectedVariantIndex] = useState(0);
-  useEffect(() => { setSelectedVariantIndex(0); }, [paragraphVariants.length, selectedParagraph?.index, selectedParagraph?.sectionId, story?.id]);
-
-  async function applySelectedVariant() {
-    if (!onChange || !selectedParagraph || !story) return;
-    const alt = paragraphVariants[selectedVariantIndex];
-    if (!alt || !alt.trim()) return;
-    await onChange({
-      _action: "apply_paragraph_variant",
-      storyId: story.id,
-      sectionId: selectedParagraph.sectionId,
-      paragraphIndex: selectedParagraph.index,
-      newText: alt,
-      notes: `Apply paragraph alternative #${selectedVariantIndex+1}`,
-    });
-  }
-
-  async function restoreOriginal() {
-    if (!onChange || !selectedParagraph || !story) return;
-    await onChange({
-      _action: "apply_paragraph_variant",
-      storyId: story.id,
-      sectionId: selectedParagraph.sectionId,
-      paragraphIndex: selectedParagraph.index,
-      newText: selectedParagraph.text || "",
-      notes: "Restore original paragraph",
-    });
-  }
+  // ===== Varianti (ultimo batch) — RIMOSSE dal pannello =====
 
   const versions = Array.isArray(story?.versions) ? story.versions : [];
   const defaultVersionId = story?.defaultVersionId || story?.meta?.defaultVersionId || null;
@@ -614,11 +582,6 @@ export default function ControlPanel({
               lengthPreset={lengthPreset}
               onReadOnPaper={onReadOnPaper}
               onGenerate={(payload)=>openNotes({ type:"paragraph", payload })}
-              variants={paragraphVariants}
-              selectedVariantIndex={selectedVariantIndex}
-              setSelectedVariantIndex={setSelectedVariantIndex}
-              onApplySelected={applySelectedVariant}
-              onRestoreOriginal={restoreOriginal}
             />
           )}
         </div>
@@ -655,7 +618,7 @@ export default function ControlPanel({
                 defaultVersionId={defaultVersionId}
                 openVersion={openVersion}
                 setDefaultVersion={setDefaultVersion}
-                height={520}
+                newestOnTop={true}
               />
             )}
           </div>
@@ -705,7 +668,7 @@ function StoryControls({ lengthPreset, setLengthPreset, storyTemp, setStoryTemp,
         </div>
         <div>
           <div className={styles.fieldRow}><label className={styles.label}>Creativity</label><span className={styles.valueRight}>{Math.round(storyTemp*100)}%</span></div>
-          <input className={styles.range} type="range" min={0} max={1} step={0.02} value={storyTemp} onChange={e=>setStoryTemp(Number(e.target.value))} />
+          <input className={styles.range} type="range" min={0} max={1} step={0.1} value={storyTemp} onChange={e=>setStoryTemp(Number(e.target.value))} />
         </div>
         <div className={styles.changePersona}>
           <label className={styles.label}>Change Persona</label>
@@ -755,7 +718,7 @@ function SectionsControls({
         </div>
         <div>
           <div className={styles.fieldRow}><label className={styles.label}>Creativity</label><span className={styles.valueRight}>{Math.round(sectionTemp*100)}%</span></div>
-          <input className={styles.range} type="range" min={0} max={1} step={0.02} value={sectionTemp} onChange={e=>setSectionTemp(Number(e.target.value))} />
+          <input className={styles.range} type="range" min={0} max={1} step={0.1} value={sectionTemp} onChange={e=>setSectionTemp(Number(e.target.value))} />
         </div>
       </div>
 
@@ -772,22 +735,16 @@ function SectionsControls({
 
 function ParagraphControls({
   story, sections, selectedParagraph,
-  pOps, setPOps, lengthPreset,        // lengthPreset arriva come default “esterno”
+  pOps, setPOps, lengthPreset,
   onReadOnPaper, onGenerate,
-  variants = [],
-  selectedVariantIndex, setSelectedVariantIndex,
-  onApplySelected, onRestoreOriginal,
 }) {
   const has = !!selectedParagraph;
 
-  // Preset di lunghezza locale per il paragrafo (allineato a Story/Sections)
+  // Preset lunghezza locale per il paragrafo
   const [pLenPreset, setPLenPreset] = useState(lengthPreset || "medium");
-  useEffect(() => {
-    // re-sync quando cambia selezione o storia
-    setPLenPreset(lengthPreset || "medium");
-  }, [lengthPreset, selectedParagraph?.index, selectedParagraph?.sectionId, story?.id]);
+  useEffect(() => { setPLenPreset(lengthPreset || "medium"); },
+    [lengthPreset, selectedParagraph?.index, selectedParagraph?.sectionId, story?.id]);
 
-  // util per mapping slider 0/1/2 <-> short/medium/long
   const presetToIdx = (lp) => Math.max(0, ["short","medium","long"].indexOf(String(lp || "medium")));
   const idxToPreset = (i) => (["short","medium","long"][Number(i)] || "medium");
 
@@ -808,32 +765,10 @@ function ParagraphControls({
             <div className={styles.selectedText}>{selectedParagraph.text}</div>
           </div>
 
-          {/* Operazioni per generare alternative */}
           <div className={styles.formGrid}>
-            <label className={styles.label}>Operations</label>
-            <div className={styles.opsRow}>
-              <label className={styles.switch}>
-                <input
-                  type="checkbox"
-                  checked={pOps.paraphrase}
-                  onChange={e=>setPOps(p=>({...p, paraphrase:e.target.checked}))}
-                />
-                <span>Paraphrase</span>
-              </label>
-              <label className={styles.switch}>
-                <input
-                  type="checkbox"
-                  checked={pOps.simplify}
-                  onChange={e=>setPOps(p=>({...p, simplify:e.target.checked}))}
-                />
-                <span>Simplify</span>
-              </label>
-            </div>
-
-            {/* Lunghezza: slider short/medium/long come negli altri tab */}
             <div>
               <div className={styles.fieldRow}>
-                <label className={styles.label}>Length per paragraph</label>
+                <label className={styles.label}>Length</label>
                 <span className={styles.valueRight}>{capFirst(pLenPreset)}</span>
               </div>
               <input
@@ -849,7 +784,6 @@ function ParagraphControls({
               <div className={styles.ticks3}><span>Short</span><span>Medium</span><span>Long</span></div>
             </div>
 
-            {/* Creatività */}
             <div>
               <div className={styles.fieldRow}>
                 <label className={styles.label}>Creativity</label>
@@ -860,14 +794,12 @@ function ParagraphControls({
                 type="range"
                 min={0}
                 max={1}
-                step={0.02}
+                step={0.1}
                 value={pOps.temp}
                 onChange={e=>setPOps(p=>({...p, temp:Number(e.target.value)}))}
               />
             </div>
-            
 
-            {/* Numero alternative: slider 1–3 per coerenza visiva */}
             <div>
               <label className={styles.label}>Alternatives</label>
               <input
@@ -885,7 +817,9 @@ function ParagraphControls({
           </div>
 
           <div className={styles.actionsSticky}>
-            <div className={styles.noteInfo}>Generate 1–3 alternatives, then pick which one to apply.</div>
+            <div className={styles.noteInfo}>
+              Generate 1–3 alternatives, then pick and apply directly in the story.
+            </div>
             <button
               className={styles.primary}
               onClick={() =>
@@ -896,10 +830,11 @@ function ParagraphControls({
                   ops: {
                     paraphrase: !!pOps.paraphrase,
                     simplify: !!pOps.simplify,
-                    temperature: clamp01(pOps.temp),
+                    temp: clamp01(pOps.temp),
                     n: clampN(pOps.n),
                     top_p: 0.9,
-                    length_preset: pLenPreset, // ← allineato agli altri tab
+                    length_preset: pLenPreset,
+                    length_op: pLenPreset === "short" ? "shorten" : pLenPreset === "long"  ? "lengthen" : "keep",
                   },
                 })
               }
@@ -907,42 +842,13 @@ function ParagraphControls({
               Continue
             </button>
           </div>
-
-          {/* Picker delle varianti (ultimo batch) */}
-          {Array.isArray(variants) && variants.length > 0 && (
-            <div className={styles.subsection} style={{ marginTop: 16 }}>
-              <div className={styles.h4}>Alternatives (last batch)</div>
-              <ul className={styles.variantList}>
-                {variants.map((v, i) => (
-                  <li key={i} className={styles.variantItem}>
-                    <label className={styles.radioRow}>
-                      <input
-                        type="radio"
-                        name="variantChoice"
-                        value={i}
-                        checked={selectedVariantIndex === i}
-                        onChange={() => setSelectedVariantIndex(i)}
-                      />
-                      <span className={styles.variantText}>{v}</span>
-                    </label>
-                  </li>
-                ))}
-              </ul>
-
-              <div className={styles.actionsRow}>
-                <button className={styles.secondary} onClick={onRestoreOriginal}>Restore original</button>
-                <button className={styles.primary} onClick={onApplySelected}>Apply selected</button>
-              </div>
-            </div>
-          )}
         </>
       )}
     </div>
   );
 }
 
-
-/* ---------------- Subcomponenti aggiunti ---------------- */
+/* ---------------- Info/History/Export come prima ---------------- */
 
 function InfoTab({
   story,
@@ -1081,77 +987,12 @@ function InfoTab({
   );
 }
 
-function HistoryTab({
-  story,
-  versions,
-  defaultVersionId,
-  layoutVersionGraph,
-  setDefaultVersion,
-  openVersion,
-}) {
-  return (
-    <div className={styles.scroll}>
-      <div className={`${styles.section} ${styles.blueCard}`}>
-        {versions.length === 0 && <div className={styles.muted}>No versions yet.</div>}
-        {versions.length > 0 && (
-          <ul className={styles.timeline}>
-            {layoutVersionGraph(versions, { trunkId: defaultVersionId }).map((v) => {
-              const isFav = v.id === defaultVersionId;
-              const title =
-                v.meta?.aiTitle ||
-                story?.title ||
-                story?.docTitle ||
-                ("v" + (v.number ?? v.id?.slice?.(-4) ?? ""));
-
-              return (
-                <li
-                  key={v.id}
-                  className={`${styles.tlItem} ${v.isBranch ? styles.isBranch : ""}`}
-                  style={{ "--lane": v.lane }}
-                >
-                  <span className={styles.tlNode} aria-hidden="true" />
-                  <div
-                    className={`${styles.tlCard} ${v.id === story?.current_revision_id ? styles.isOpen : ""}`}
-                    onClick={() => openVersion(v.id)}
-                    role="button" tabIndex={0}
-                    onKeyDown={(e)=> (e.key==='Enter'||e.key===' ') && openVersion(v.id)}
-                  >
-                    <div className={styles.vRow}>
-                      <div className={styles.vTitle}>{title}</div>
-                      <button
-                        className={`${styles.favToggle} ${isFav ? styles.favOn : ""}`}
-                        title={isFav ? "Preferred" : "Set as preferred"}
-                        onClick={(e)=>{ e.stopPropagation(); setDefaultVersion(v.id); }}
-                        type="button"
-                      >
-                        ★
-                      </button>
-                    </div>
-
-                    <div className={styles.vMeta}>
-                      {new Date(v.createdAt).toLocaleString()} · {(v.createdBy || "system")}
-                    </div>
-
-                    <div className={styles.vPublic}>Public</div>
-
-                    {v.notes && <div className={styles.vNotes}>{v.notes}</div>}
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </div>
-    </div>
-  );
-}
-
 function ExportTab({
   story,
   sections,
   exportFormat, setExportFormat,
   exportHeader, setExportHeader,
-  // exportMedia, setExportMedia, // ← disabilitato: media non previsti ora
+  exportMedia, setExportMedia,
   exportMeta, setExportMeta,
   exportSectionIds, setExportSectionIds,
   toggleExportSection,
@@ -1164,12 +1005,10 @@ function ExportTab({
     <div className={styles.scroll}>
       <div className={`${styles.section} ${styles.blueCard}`}>
 
-        {/* --- Options ---------------------------------------------------- */}
         <div className={styles.subsection}>
           <div className={styles.h4}>Options</div>
 
           <div className={styles.formGrid} style={{marginTop: 0}}>
-            {/* Format */}
             <div>
               <div className={styles.fieldRow}>
                 <label className={styles.label}>Format</label>
@@ -1191,7 +1030,6 @@ function ExportTab({
               </select>
             </div>
 
-            {/* Header */}
             <div>
               <div className={styles.fieldRow}>
                 <label className={styles.label}>Header</label>
@@ -1207,25 +1045,6 @@ function ExportTab({
               </label>
             </div>
 
-            {/* Media (commentato: non previsto ora) */}
-            {/*
-            <div>
-              <div className={styles.fieldRow}>
-                <label className={styles.label}>Media</label>
-                <span className={styles.valueRight}>{exportMedia ? "Included" : "Excluded"}</span>
-              </div>
-              <label className={styles.switch}>
-                <input
-                  type="checkbox"
-                  checked={exportMedia}
-                  onChange={e=>setExportMedia(e.target.checked)}
-                />
-                <span>Include media</span>
-              </label>
-            </div>
-            */}
-
-            {/* Metadata */}
             <div>
               <div className={styles.fieldRow}>
                 <label className={styles.label}>Metadata</label>
@@ -1247,7 +1066,6 @@ function ExportTab({
           </div>
         </div>
 
-        {/* --- Sections to export ---------------------------------------- */}
         <div className={styles.subsection}>
           <div className={styles.h4}>Sections to export</div>
 
@@ -1271,7 +1089,6 @@ function ExportTab({
           </div>
         </div>
 
-        {/* --- Sticky actions -------------------------------------------- */}
         <div className={styles.actionsSticky}>
           <div className={styles.noteInfo}>
             The exported file opens in a new tab (HTML/PDF) or downloads locally (Markdown).
@@ -1289,10 +1106,13 @@ function ExportTab({
   );
 }
 
-
 /* ---------------- Utils ---------------- */
 function clamp01(x){ x = Number(x)||0; return Math.min(1, Math.max(0, x)); }
 function clampN(n){ return Math.min(3, Math.max(1, Number(n)||1)); }
+function quantizeTemp01(x){
+  x = Math.min(1, Math.max(0, Number(x)||0));
+  return Math.round(x * 10) / 10; // scatti del 10%
+}
 function fmt(x){ const n = Number(x); return isFinite(n) ? n.toFixed(2) : String(x ?? "-"); }
 function findSectionTitle(sections, id){
   const key = String(id);
@@ -1300,18 +1120,6 @@ function findSectionTitle(sections, id){
   return s?.title || "Section";
 }
 function capFirst(s){ return String(s||"").replace(/^\w/, m => m.toUpperCase()); }
-
-function findSectionIndexById(sections, id){
-  const key = String(id);
-  return (sections||[]).findIndex(ss => String(ss.id ?? ss.sectionId) === key);
-}
-
-function cleanCandidate(s){
-  let t = String(s || "");
-  t = t.replace(/^\s*\{[\s\S]*?\}\s*Human:.*$/i, "").trim();
-  t = t.replace(/^\s*Assistant:\s*/i, "");
-  return t.trim();
-}
 
 function getLengthPreset(meta){
   const p = meta?.upstreamParams?.lengthPreset;
@@ -1325,39 +1133,31 @@ function getLengthPreset(meta){
   return "medium";
 }
 function getCreativity(meta){
-  if (meta?.upstreamParams?.temp != null) return Number(meta.upstreamParams.temp);
-  if (typeof meta?.creativity === "number") return Number(meta.creativity) / 100;
+  if (meta?.upstreamParams?.temp != null) return quantizeTemp01(meta.upstreamParams.temp);
+  if (typeof meta?.creativity === "number") return quantizeTemp01(Number(meta.creativity) / 100);
   return 0.0;
 }
 function defaultKnobsFromMeta(meta, sectionCount = null){
   const up = meta?.upstreamParams || {};
   const hasTargets = Array.isArray(up.targets) && up.targets.length > 0;
-
-  // baseline "vera" dai metadati globali (NON dall'ultimo comando inviato)
-  const baseLP   = getLengthPreset(meta);   // derive da meta.lengthPerSection o "medium"
-  const baseTemp = getCreativity(meta);     // derive da meta.creativity o up.temp globale
-
-  // Se l'ultimo comando era PARZIALE, NON usiamo upstreamParams come default!
+  const baseLP   = getLengthPreset(meta);
+  const baseTemp = getCreativity(meta);
   if (hasTargets) {
     return {
       lengthPreset: String(baseLP || "medium"),
       temp: Number(isFinite(baseTemp) ? baseTemp : 0),
     };
   }
-
-  // Altrimenti (full story), upstreamParams può fare da default, ma sempre con fallback sicuri
   return {
     lengthPreset: String(up.lengthPreset || baseLP || "medium"),
     temp: Number(isFinite(up.temp) ? up.temp : (isFinite(baseTemp) ? baseTemp : 0)),
   };
 }
-
 function sectionKnobs(section, defaults){
   const temp = (typeof section?.temp === "number") ? section.temp : defaults.temp;
   const lengthPreset = section?.lengthPreset || defaults.lengthPreset;
   return { temp, lengthPreset };
 }
-
 function aggregateStoryKnobs(sections, defaults){
   const items = (sections || []).filter(s => s?.visible !== false).map(s => sectionKnobs(s, defaults));
   const temps = items.map(i => i.temp).filter(n => Number.isFinite(n));

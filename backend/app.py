@@ -276,8 +276,14 @@ class RegenParagraphVmReq(BaseModel):
     section_index: int
     paragraph_index: int
     paragraph_text: Optional[str] = None
-    section: Optional[VmSection] = None   # ✅ typed section
+    section: Optional[VmSection] = None
     ops: RegenParagraphOps
+    # 👇 opzionali per compatibilità con la route Next
+    temp: Optional[float] = None
+    top_p: Optional[float] = None
+    n: Optional[int] = None
+    length_preset: Optional[str] = None
+
 
 
 class RegenParagraphVmResp(BaseModel):
@@ -312,7 +318,7 @@ def _headers():
         h["X-API-Key"] = REMOTE_API_KEY
     return h
 
-def _gpu(url_path: str, payload: dict, timeout: int = 1800):
+def _gpu(url_path: str, payload: dict, timeout: int = 3000):
     if not REMOTE_GPU_URL:
         raise RuntimeError("GPU URL not configured")
     r = requests.post(f"{REMOTE_GPU_URL}{url_path}", json=payload, headers=_headers(), timeout=timeout)
@@ -425,7 +431,6 @@ async def explain_endpoint(
             "top_p": float(top_p),
             "max_new_tokens": lp["max_new_tokens"],
             "min_new_tokens": lp["min_new_tokens"],
-            "target_words": lp["target_words"],
             "retriever": retriever or RETRIEVAL_DEFAULTS["retriever"],
             "retriever_model": retriever_model or RETRIEVAL_DEFAULTS["retriever_model"],
             "k": int(k) if k is not None else RETRIEVAL_DEFAULTS["k"],
@@ -435,7 +440,7 @@ async def explain_endpoint(
         }
     }
 
-    data = _gpu("/api/two_stage_story", payload, timeout=1800)
+    data = _gpu("/api/two_stage_story", payload, timeout=3000)
     for s in data.get("sections", []):
         if "narrative" not in s and "text" in s:
             s["narrative"] = s["text"]
@@ -468,7 +473,6 @@ async def explain_endpoint(
             "creativity": int(float(temp) * 100),
             "outline": outline,
             "storytellerParams": {
-                "preset": st_preset,
                 "temperature": float(temp),
                 "top_p": float(top_p),
                 "max_new_tokens": lp["max_new_tokens"],
@@ -519,7 +523,6 @@ def generate_from_text(req: GenerateFromTextRequest = Body(..., examples={"defau
             "top_p": float(req.top_p),
             "max_new_tokens": lp["max_new_tokens"],
             "min_new_tokens": lp["min_new_tokens"],
-            "target_words": lp["target_words"],
             # === NEW: retrieval (req o defaults) ===
             "retriever": req.retriever or RETRIEVAL_DEFAULTS["retriever"],
             "retriever_model": req.retriever_model or RETRIEVAL_DEFAULTS["retriever_model"],
@@ -530,7 +533,7 @@ def generate_from_text(req: GenerateFromTextRequest = Body(..., examples={"defau
         }
     }
 
-    data = _gpu("/api/two_stage_story", payload, timeout=1800)
+    data = _gpu("/api/two_stage_story", payload, timeout=3000)
     for s in data.get("sections", []):
         if "narrative" not in s and "text" in s:
             s["narrative"] = s["text"]
@@ -579,7 +582,7 @@ class RegenVmRequest(BaseModel):
     title: Optional[str] = "Paper"
     length: str = "medium"
     temp: float = 0.0
-    top_p: float = 1.0
+    top_p: float = 0.9
     # retrieval opzionali
     retriever: Optional[str] = None
     retriever_model: Optional[str] = None
@@ -620,7 +623,7 @@ def regen_vm(req: RegenVmRequest):
             **({ "overlap_words": int(req.overlap_words) } if req.overlap_words is not None else {}),
         }
     }
-    data = _gpu("/api/two_stage_story_from_outline", payload, timeout=1800)
+    data = _gpu("/api/two_stage_story_from_outline", payload, timeout=3000)
     return {
         "persona": data.get("persona", req.persona),
         "title": data.get("title") or req.title or "Paper",
@@ -677,13 +680,13 @@ def regen_sections_vm(req: RegenSectionsVmReq):
         "paper_title": title,
         "cleaned_text": text,
         "outline": outline,
+        "targets": sorted(list(targets)),
         "storyteller": {
             "preset": lp["preset"],
             "temperature": float(req.temp or 0.0),
             "top_p": float(req.top_p or 0.9),
             "max_new_tokens": lp["max_new_tokens"],
             "min_new_tokens": lp["min_new_tokens"],
-            "target_words": lp["target_words"],
             **({ "retriever": req.retriever } if req.retriever is not None else {}),
             **({ "retriever_model": req.retriever_model } if req.retriever_model is not None else {}),
             **({ "k": int(req.k) } if req.k is not None else {}),
@@ -692,10 +695,10 @@ def regen_sections_vm(req: RegenSectionsVmReq):
             **({ "overlap_words": int(req.overlap_words) } if req.overlap_words is not None else {}),
         },
     }
-    data = _gpu("/api/two_stage_story_from_outline", payload, timeout=1800)
+    data = _gpu("/api/regen_sections_vm", payload, timeout=3000)
 
     # 3) Normalizza output VM e fai MERGE selettivo
-    new_secs = _normalize_sections(data.get("sections", []))
+    sparse = data.get("sections", {}) or {}
 
     def _norm_keep(sec: dict, i: int) -> dict:
         # normalizza la sezione "kept" per avere sempre paragraphs coerenti
@@ -717,19 +720,20 @@ def regen_sections_vm(req: RegenSectionsVmReq):
 
     merged = []
     for i, old in enumerate(sections):
-        if i in targets and i < len(new_secs):
-            gen = new_secs[i]
+        if i in targets and str(i) in sparse:
+            gen_norm = _normalize_sections([sparse[str(i)]])[0]
             merged.append({
                 "id": (old.get("id") or f"sec-{i}"),
-                "title": gen.get("title") or old.get("title") or f"Section {i+1}",
-                "text": gen.get("text") or gen.get("narrative") or "",
-                "paragraphs": gen.get("paragraphs") or [],
+                "title": gen_norm.get("title") or old.get("title") or f"Section {i+1}",
+                "text": gen_norm.get("text") or gen_norm.get("narrative") or "",
+                "paragraphs": gen_norm.get("paragraphs") or [],
                 "hasImage": bool(old.get("hasImage")),
                 "visible": old.get("visible", True),
                 "description": old.get("description") or None,
             })
         else:
             merged.append(_norm_keep(old, i))
+
 
     # 4) Meta semplice + stats
     def _wc(s): return len(re.findall(r"\b\w+\b", s or ""))
@@ -779,29 +783,37 @@ def regen_paragraph_vm(req: RegenParagraphVmReq):
 
     if req.paragraph_index < 0 or req.paragraph_index >= len(sec_paragraphs):
         raise HTTPException(422, "invalid paragraph_index for provided section.paragraphs")
+    
+    # merge knobs (leggi sia top-level che ops.*)
+    temp = (req.temp if req.temp is not None else req.ops.temperature) or 0.3
+    top_p = (req.top_p if req.top_p is not None else req.ops.top_p) or 0.9
+    n = int((req.n if req.n is not None else req.ops.n) or 1)
+    n = max(1, min(3, n))
+
+    length_preset = (req.length_preset or req.ops.length_preset or "medium")
+    length_op = (req.ops.length_op or "keep")
 
     payload = {
         "persona": req.persona,
         "paper_title": req.title or "Paper",
         "cleaned_text": req.text,
-        "section": {
-            "title": sec_title,
-            "paragraphs": sec_paragraphs,
-        },
+        "section": {"title": sec_title, "paragraphs": sec_paragraphs},
         "section_index": int(req.section_index),
         "paragraph_index": int(req.paragraph_index),
         "ops": {
             "paraphrase": bool(req.ops.paraphrase),
             "simplify": bool(req.ops.simplify),
-            "length_op": str(req.ops.length_op or "keep"),
+            "length_op": str(length_op),
         },
-        # top-level sampling knobs (as your GPU VM expects them outside ops)
-        "temperature": float(req.ops.temperature or 0.3),
-        "top_p": float(req.ops.top_p or 0.9),
-        "n": max(1, min(3, int(req.ops.n or 1))),
+        # sampling knobs (VM si aspetta top-level)
+        "temperature": float(temp),
+        "top_p": float(top_p),
+        "n": n,
+        # 👇 fondamentale per la lunghezza
+        "length_preset": str(length_preset),
     }
 
-    data = _gpu("/api/regen_paragraph_vm", payload, timeout=1800)
+    data = _gpu("/api/regen_paragraph_vm", payload, timeout=3000)
 
     alts_raw = data.get("alternatives") or []
     alts = []
