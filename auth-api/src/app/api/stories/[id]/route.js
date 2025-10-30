@@ -7,6 +7,17 @@ import { randomUUID } from "node:crypto";
 
 const { stories, storyRevisions } = Schema;
 
+function mergeSections(prevSections = [], patchSections = []) {
+  const max = Math.max(prevSections.length, patchSections.length);
+  const out = [];
+  for (let i = 0; i < max; i++) {
+    const prev = prevSections[i] || {};
+    const next = patchSections[i];
+    out[i] = next ? { ...prev, ...next } : prev;
+  }
+  return out;
+}
+
 async function loadOwnedStory(userId, storyId) {
   const [s] = await db
     .select()
@@ -44,18 +55,57 @@ function materialize(story, rev) {
     if (typeof c === "string") { try { c = JSON.parse(c); } catch { c = null; } }
     if (c && Array.isArray(c.sections)) sections = c.sections;
   }
+  const meta = rev?.meta ?? {};
+  const hasAgg = meta && (meta.currentAggregates || meta.aggregates);
+  const aggregates = hasAgg
+    ? (meta.currentAggregates || meta.aggregates)
+    : computeAggregatesFromSections(sections, meta);
+
+    return {
+      id: story.id,
+      title: story.title,
+      createdAt: story.createdAt,
+      updatedAt: story.updatedAt,
+      visibility: story.visibility,
+      current_revision_id: story.currentRevisionId,
+      persona: rev?.persona ?? null,
+      // 👇 inietto
+      meta: {
+        ...meta,
+        currentAggregates: aggregates,
+      },
+      sections,
+      content: rev?.content ?? null,
+    };
+}
+function computeAggregatesFromSections(sections, meta = {}) {
+  const up = meta?.upstreamParams || {};
+  const baseLen = up.lengthPreset || "medium";
+  const baseTemp = typeof up.temp === "number" ? up.temp : 0;
+
+  if (!Array.isArray(sections) || sections.length === 0) {
+    return {
+      lengthLabel: baseLen,
+      avgTemp: baseTemp,
+      sectionsCount: 0,
+    };
+  }
+
+  // lunghezze effettive per ogni sezione
+  const effLens = sections.map(s => (s?.lengthPreset ? s.lengthPreset.toLowerCase() : baseLen.toLowerCase()));
+  const allSame = effLens.every(l => l === effLens[0]);
+  const lengthLabel = allSame ? effLens[0] : "mix";
+
+  // creatività effettiva per ogni sezione
+  const temps = sections.map(s =>
+    typeof s?.temp === "number" ? s.temp : baseTemp
+  );
+  const avgTemp = temps.reduce((a,b)=>a+b,0) / temps.length;
 
   return {
-    id: story.id,
-    title: story.title,
-    createdAt: story.createdAt,
-    updatedAt: story.updatedAt,
-    visibility: story.visibility,
-    current_revision_id: story.currentRevisionId,
-    persona: rev?.persona ?? null,
-    meta: rev?.meta ?? null,
-    sections,
-    content: rev?.content ?? null,
+    lengthLabel,
+    avgTemp,
+    sectionsCount: sections.length,
   };
 }
 
@@ -163,8 +213,10 @@ export async function PATCH(req, { params }) {
 
     // ⬇️ la regola definitiva
     const nextSections = sectionsExplicitButEmpty
-      ? prevSections                              // IGNORA lo svuotamento involontario
-      : (sectionsProvided ? patch.sections : prevSections);
+      ? prevSections
+      : (sectionsProvided
+          ? mergeSections(prevSections, patch.sections) 
+          : prevSections);
 
     // 4) PERSONA e META: preserva se assenti nel patch
     const nextPersona = has("persona") ? patch.persona : (prevRev?.persona ?? null);
@@ -210,24 +262,32 @@ export async function PATCH(req, { params }) {
     const revisionalChange =
     (has("sections") && !sectionsExplicitButEmpty) || has("persona") || has("meta") || has("content");
 
-    let rev = prevRev;
-    if (revisionalChange) {
-      const parentId = baseRev?.id || null;
-      const mergedMeta = {
-        ...(nextMeta ?? {}),
-        ...(parentId ? { parentRevisionId: parentId } : {}),
-      };
-    
-      const [inserted] = await db.insert(storyRevisions).values({
-        id: randomUUID(),
-        storyId: s.id,
-        content: nextContentObj,     // JSONB oggetto
-        persona: nextPersona ?? "General Public",
-        meta: mergedMeta,            // 👈 include parentRevisionId se presente
-        createdAt: new Date(),
-      }).returning();
-      rev = inserted;
-    }
+  let rev = prevRev;
+  if (revisionalChange) {
+    const parentId = baseRev?.id || null;
+
+    // 👇 1) calcolo gli aggregati SULLE SEZIONI CHE STIAMO PER SALVARE
+    const aggregates = computeAggregatesFromSections(nextSections, nextMeta);
+
+    // 👇 2) li metto dentro la meta della revisione
+    const mergedMeta = {
+      ...(nextMeta ?? {}),
+      currentAggregates: aggregates,          // 👈 QUI
+      ...(parentId ? { parentRevisionId: parentId } : {}),
+    };
+  
+    // 👇 3) salvo la revisione con la meta già “pulita”
+    const [inserted] = await db.insert(storyRevisions).values({
+      id: randomUUID(),
+      storyId: s.id,
+      content: nextContentObj,     // JSONB oggetto
+      persona: nextPersona ?? "General Public",
+      meta: mergedMeta,
+      createdAt: new Date(),
+    }).returning();
+    rev = inserted;
+  }
+
 
     // 7) aggiorna la riga 'stories' (titolo + puntatore revisione se creata)
     const preferTitle = (t) => typeof t === "string" && t.trim() && !/\.pdf$/i.test(t);

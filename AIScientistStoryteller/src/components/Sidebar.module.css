@@ -1,42 +1,44 @@
 /* SciTeller — Sidebar sinistra (STICKY + glass) */
-
-.wrap{
+.wrap {
   position: sticky;
   top: calc(var(--nav-h) + 2*var(--sticky-gap, var(--sp-2)));
-  max-height: calc(100vh - var(--nav-h) - (2* var(--sticky-gap, var(--sp-2)) * 2) - 5.5em);
   width: var(--sidebar-w);
-
-  /* fondamentale: il grid item deve “stirarsi” sulla riga */
   align-self: stretch;
-  
 }
 
-.panel{
+/* contenitore fisso che occupa tutta la colonna */
+.panel {
+  position: fixed;
+  left: 0;
+  top: calc(var(--nav-h) + 2*var(--sticky-gap, var(--sp-2)));
+  /* 👇 fino in fondo alla finestra */
+  bottom: 7rem; /* margine sotto per respiro, puoi mettere 0 */
   width: var(--sidebar-w);
-  min-height: calc(100vh - 2 * 6em);
+
   display: grid;
   grid-template-rows: 1fr auto;
+
   border-radius: 0 5px 5px 0;
   background: var(--bg-navbar);
   -webkit-backdrop-filter: blur(14px);
   backdrop-filter: blur(3px);
-  position: fixed;
-  overflow: visible; /* serve per far “uscire” l’after a metà */
   border: 1px dashed var(--line-0);
+  overflow: hidden; /* importantissimo: niente roba che esce */
 }
 
-
-
-
-
+/* area scrollabile */
 .scroll {
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
   padding: var(--sp-3);
   display: flex;
   flex-direction: column;
-  align-items: start;
   gap: 8px;
+  /* riempi tutto lo spazio disponibile sopra al footer */
+  height: 100%;
+  min-height: 0; /* per far funzionare lo scroll in grid */
 }
+
 .loading { padding: 8px 12px; color: #666; }
 .empty   { padding: 8px 12px; color: #888; font-style: italic; }
 
@@ -56,7 +58,9 @@
   height: 2.5em;
   width: 100%;
 }
-.item:hover {  background: color-mix(in oklab, var(--accent) 49%, rgba(255,255,255,.62)); }
+.item:hover {
+  background: color-mix(in oklab, var(--accent) 49%, rgba(255,255,255,.62));
+}
 
 .active {
   background: color-mix(in oklab, var(--accent) 12%, rgba(255,255,255,.62));
@@ -81,11 +85,13 @@
   border-color: color-mix(in oklab, var(--danger) 40%, var(--line-0));
 }
 
+/* footer SEMPRE visibile */
 .footer {
   padding: var(--sp-3);
   border-top: 1px dashed var(--line-0);
   background: rgba(255,255,255,.36);
   border-radius: 0 0 5px 0;
+  min-height: 60px;
 }
 
 .newBtn {
@@ -94,18 +100,8 @@
   height: 46px;
 }
 
-/* Evidenzia l'item quando si naviga da tastiera */
 .item:focus-visible {
-  outline: 2px solid rgba(99, 102, 241, 0.6); /* violet-500 */
+  outline: 2px solid rgba(99, 102, 241, 0.6);
   outline-offset: 2px;
   border-radius: 10px;
 }
-
-/* Titoli in una riga con ellissi */
-.itemTitle {
-  display: block;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-

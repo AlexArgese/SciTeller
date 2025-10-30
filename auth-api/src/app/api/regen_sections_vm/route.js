@@ -73,6 +73,13 @@ function sectionsFromRev(rev) {
 
 function materialize(story, rev) {
   const content = (rev?.content && typeof rev.content === "object") ? rev.content : null;
+  const meta = rev?.meta ?? {};
+  const sections = Array.isArray(content?.sections) ? content.sections : [];
+
+  const currentAggregates =
+    meta.currentAggregates ||
+    computeAggregatesFromSections(sections, meta);
+
   return {
     id: story.id,
     title: story.title,
@@ -81,11 +88,12 @@ function materialize(story, rev) {
     visibility: story.visibility,
     current_revision_id: story.currentRevisionId,
     persona: rev?.persona ?? null,
-    meta: rev?.meta ?? null,
-    sections: Array.isArray(content?.sections) ? content.sections : [],
+    meta: { ...meta, currentAggregates },
+    sections,
     content,
   };
 }
+
 
 function mapIdsToIndexes(sections, ids = []) {
   const idToIdx = new Map(
@@ -138,6 +146,36 @@ function adaptSectionPatch(patch, fallback) {
       ? patch.paragraphs
       : ensureParagraphsFromText(raw),
     visible: fallback?.visible !== false,
+  };
+}
+function computeAggregatesFromSections(sections, meta = {}) {
+  const up = meta?.upstreamParams || {};
+  const baseLen = up.lengthPreset || "medium";
+  const baseTemp = typeof up.temp === "number" ? up.temp : 0;
+
+  if (!Array.isArray(sections) || sections.length === 0) {
+    return {
+      lengthLabel: baseLen,
+      avgTemp: baseTemp,
+      sectionsCount: 0,
+    };
+  }
+
+  const effLens = sections.map(s =>
+    s?.lengthPreset ? s.lengthPreset.toLowerCase() : baseLen.toLowerCase()
+  );
+  const allSame = effLens.every(l => l === effLens[0]);
+  const lengthLabel = allSame ? effLens[0] : "mix";
+
+  const temps = sections.map(s =>
+    typeof s?.temp === "number" ? s.temp : baseTemp
+  );
+  const avgTemp = temps.reduce((a,b)=>a+b,0) / temps.length;
+
+  return {
+    lengthLabel,
+    avgTemp,
+    sectionsCount: sections.length,
   };
 }
 
@@ -281,19 +319,39 @@ export async function POST(req) {
       for (const k of Object.keys(vmData.sections)) {
         const i = Number(k);
         if (Number.isInteger(i) && i >= 0 && i < mergedSections.length) {
-          mergedSections[i] = adaptSectionPatch(vmData.sections[k], mergedSections[i]);
+          mergedSections[i] = {
+            ...adaptSectionPatch(vmData.sections[k], mergedSections[i]),
+            temp,
+            lengthPreset,
+          };
         }
-      }
+      }      
     } else if (Array.isArray(vmData.sections)) {
-      mergedSections = vmData.sections;
-    }
+      mergedSections = vmData.sections.map((sec, idx) => {
+        const base = baseSections[idx] || {};
+        const patched = adaptSectionPatch(sec, base);
+        const isTarget = targets.includes(idx);
+        return isTarget
+          ? { ...patched, temp, lengthPreset }
+          : patched;
+      });
+    }    
 
     // 8) Meta: eredita + note + parent + traccia ultima partial-regen
+    const baseMeta = baseRev?.meta || {};
+    const currentAggregates =
+      vmData?.meta?.currentAggregates ||
+      baseMeta.currentAggregates ||
+      computeAggregatesFromSections(mergedSections, baseMeta);
+
+
     const mergedMeta = {
-      ...(baseRev?.meta || {}),
+      ...baseMeta,
       ...(vmData?.meta || {}),
       ...(notes ? { notes } : {}),
       ...(baseRev?.id ? { parentRevisionId: baseRev.id } : {}),
+      // 👇 salviamo ANCHE gli aggregati validi
+      currentAggregates: currentAggregates,
       lastPartialRegen: {
         at: new Date().toISOString(),
         targets,

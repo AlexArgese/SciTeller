@@ -727,6 +727,8 @@ def regen_sections_vm(req: RegenSectionsVmReq):
                 "title": gen_norm.get("title") or old.get("title") or f"Section {i+1}",
                 "text": gen_norm.get("text") or gen_norm.get("narrative") or "",
                 "paragraphs": gen_norm.get("paragraphs") or [],
+                "temp": float(req.temp or 0.0),
+                "lengthPreset": lp["preset"],
                 "hasImage": bool(old.get("hasImage")),
                 "visible": old.get("visible", True),
                 "description": old.get("description") or None,
@@ -745,17 +747,14 @@ def regen_sections_vm(req: RegenSectionsVmReq):
     meta = {
         "upstreamParams": {
             "mode": "regen_partial_vm_outline",
-            "persona": persona,
-            "temp": float(req.temp or 0.0),
-            "top_p": float(req.top_p or 0.9),
-            "lengthPreset": lp["preset"],
-            "retriever": req.retriever,
-            "retriever_model": req.retriever_model,
-            "k": req.k,
-            "max_ctx_chars": req.max_ctx_chars,
-            "seg_words": req.seg_words,
-            "overlap_words": req.overlap_words,
             "targets": sorted(list(targets)),
+        },
+        "lastPartialRegen": {
+        "at": __import__("datetime").datetime.utcnow().isoformat() + "Z",
+        "temp": float(req.temp or 0.0),
+        "top_p": float(req.top_p or 0.9),
+        "lengthPreset": lp["preset"],
+        "targets": sorted(list(targets)),
         },
         "stats": {
             "per_section": per_sec,

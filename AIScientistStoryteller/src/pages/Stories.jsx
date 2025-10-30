@@ -15,6 +15,47 @@ import {
 import Loading from "../components/Loading.jsx";
 
 /* ───────────────── helpers comuni ───────────────── */
+function deriveAggregatesFromSections(sections = [], base = {}) {
+  const baseLen = base.lengthPreset || "medium";
+  const baseTemp = typeof base.temp === "number" ? base.temp : 0;
+  if (!sections.length) return { lengthLabel: baseLen, avgTemp: baseTemp, sectionsCount: 0 };
+  const lens = sections.map(s => (s.lengthPreset || baseLen).toLowerCase());
+  const allSame = lens.every(l => l === lens[0]);
+  const temps = sections.map(s => typeof s.temp === "number" ? s.temp : baseTemp);
+  return {
+    lengthLabel: allSame ? lens[0] : "mix",
+    avgTemp: temps.reduce((a,b)=>a+b,0)/temps.length,
+    sectionsCount: sections.length,
+  };
+}
+function guessParagraphLengthPreset(text = "") {
+  const words = String(text).trim().split(/\s+/).filter(Boolean).length;
+  if (words <= 60) return "short";
+  if (words >= 110) return "long";
+  return "medium";
+}
+function recomputeSectionFromParagraphs(section) {
+  const paras = Array.isArray(section.paragraphs)
+    ? section.paragraphs.map(p => (typeof p === "string" ? p : String(p || "")))
+    : [];
+  if (!paras.length) return section;
+
+  // 1) lunghezze per paragrafo
+  const paraPresets = paras.map(p => guessParagraphLengthPreset(p));
+  const allSame = paraPresets.every(p => p === paraPresets[0]);
+  const sectionLen = allSame ? paraPresets[0] : "mix";
+
+  // 2) creatività: se la sezione ha un temp “suo” tienilo,
+  // altrimenti prova a vedere se hai temp per i blocchi (se non li hai, lascia stare)
+  // per semplicità: se non hai temp per-paragrafo, NON cambiare temp della sezione
+  return {
+    ...section,
+    lengthPreset: sectionLen,
+    // text / narrative coerenti
+    text: paras.join("\n\n"),
+    narrative: paras.join("\n\n"),
+  };
+}
 
 // index di sezione da id (visibile)
 function sectionIndexById(story, sectionId) {
@@ -514,45 +555,102 @@ export default function Stories(){
 
       closeCPOnAsyncStart();
 
-      const baseRevisionId = activeRevisionId || st?.current_revision_id || st?.defaultVersionId || null;
+      const baseRevisionId =
+        activeRevisionId ||
+        st?.current_revision_id ||
+        st?.defaultVersionId ||
+        null;
 
-      const upstream = st?.meta?.upstreamParams || {};
+      // 👇 questi sono i KNOB CHE MANDIAMO AL BACKEND
+      const oldUp = st?.meta?.upstreamParams || {};
       const knobs = {
-        temp: Number(patch?.temp ?? upstream?.temp ?? 0.0),
-        lengthPreset: String(patch?.lengthPreset || upstream?.lengthPreset || "medium"),
-        top_p: Number(upstream?.top_p ?? 0.9),
-        retriever: upstream?.retriever,
-        retriever_model: upstream?.retriever_model,
-        k: upstream?.k,
-        max_ctx_chars: upstream?.max_ctx_chars,
-        seg_words: upstream?.seg_words,
-        overlap_words: upstream?.overlap_words,
+        temp: Number(patch?.temp ?? oldUp?.temp ?? 0.0),
+        lengthPreset: String(patch?.lengthPreset || oldUp?.lengthPreset || "medium"),
+        top_p: Number(oldUp?.top_p ?? 0.9),
+        retriever: oldUp?.retriever,
+        retriever_model: oldUp?.retriever_model,
+        k: oldUp?.k,
+        max_ctx_chars: oldUp?.max_ctx_chars,
+        seg_words: oldUp?.seg_words,
+        overlap_words: oldUp?.overlap_words,
       };
 
       try {
         setBusySectionIds(sectionIds);
 
-        const updatedStory = await regenerateSelectedSections(st.id, {
+        const updatedFromServer = await regenerateSelectedSections(st.id, {
           sectionIds,
           ...(baseRevisionId ? { baseRevisionId } : {}),
           knobs,
           notes: patch?.notes || undefined,
-        });        
+        });
 
-        let versions = [];
-        try { versions = await getRevisions(st.id); } catch {}
-        const withVersions = {
-          ...updatedStory,
-          versions,
-          defaultVersionId: updatedStory?.current_revision_id || null,
+        // 👇 qui facciamo il MERGE invece di prendere 1:1
+        const serverMeta = updatedFromServer?.meta || {};
+        const prevMeta   = st?.meta || {};
+
+        // 1) 
+        const mergedUpstream = {
+          ...oldUp,
+          temp: knobs.temp,                       // ⬅️ forza il nuovo 0.7
+          lengthPreset: knobs.lengthPreset,       // ⬅️ forza il nuovo "short"
+          top_p: knobs.top_p,
+          ...(serverMeta?.upstreamParams && typeof serverMeta.upstreamParams === "object"
+            ? {
+                ...(serverMeta.upstreamParams.retriever       != null ? { retriever: serverMeta.upstreamParams.retriever } : {}),
+                ...(serverMeta.upstreamParams.retriever_model != null ? { retriever_model: serverMeta.upstreamParams.retriever_model } : {}),
+                ...(serverMeta.upstreamParams.k               != null ? { k: serverMeta.upstreamParams.k } : {}),
+                ...(serverMeta.upstreamParams.max_ctx_chars   != null ? { max_ctx_chars: serverMeta.upstreamParams.max_ctx_chars } : {}),
+                ...(serverMeta.upstreamParams.seg_words       != null ? { seg_words: serverMeta.upstreamParams.seg_words } : {}),
+                ...(serverMeta.upstreamParams.overlap_words   != null ? { overlap_words: serverMeta.upstreamParams.overlap_words } : {}),
+              }
+            : {}),
         };
 
-        setStories(prev => prev.map(s => (s.id === withVersions.id ? withVersions : s)));
-        // punta alla nuova revisione corrente (quella appena aggiornata/applicata)
+        // 2) lastPartialRegen: questo invece è SEMPRE quello nuovo
+        const lastPartialRegen = {
+          targets: sectionIds,
+          lengthPreset: knobs.lengthPreset,
+          temp: knobs.temp,
+          at: new Date().toISOString(),
+        };
+
+        const mergedMeta = {
+          ...prevMeta,
+          ...serverMeta,
+          upstreamParams: mergedUpstream,
+          lastPartialRegen,
+        };
+
+        const withMerged = {
+          ...updatedFromServer,
+          meta: mergedMeta,
+        };
+        const aggregates = deriveAggregatesFromSections(withMerged.sections, mergedMeta.upstreamParams || {});
+        withMerged.meta = {
+          ...withMerged.meta,
+          currentAggregates: aggregates,
+        };
+
+        // ricarica versions
+        let versions = [];
+        try {
+          versions = await getRevisions(st.id);
+        } catch {}
+
+        const withVersions = {
+          ...withMerged,
+          versions,
+          defaultVersionId: withMerged?.current_revision_id || null,
+        };
+
+        setStories(prev =>
+          prev.map(s => (s.id === withVersions.id ? withVersions : s))
+        );
+
         if (withVersions?.current_revision_id) {
           setActiveRevisionId(withVersions.current_revision_id);
         }
-
 
         setCpStage("default");
         setSelectedParagraph(null);
@@ -566,6 +664,7 @@ export default function Stories(){
       }
       return;
     }
+
 
     if (patch?._action === "regen_paragraph_vm") {
       const st = selectedStory;
@@ -600,13 +699,24 @@ export default function Stories(){
 
         // A) backend ritorna la story già aggiornata
         if (res && Array.isArray(res.sections)) {
-          const resWithNotes =
-            (res.meta?.lastParagraphEdit?.notes)
-              ? { ...res, meta: { ...res.meta, notes: res.meta.lastParagraphEdit.notes } }
-              : res;
+          const aggregates = deriveAggregatesFromSections(
+            res.sections,
+            (res.meta && res.meta.upstreamParams) || (st.meta && st.meta.upstreamParams) || {}
+          );
+          const resWithAgg = {
+            ...res,
+            meta: {
+              ...(res.meta || {}),
+              currentAggregates: aggregates,
+            },
+          };
           let versions = [];
           try { versions = await getRevisions(st.id); } catch {}
-          const withVersions = { ...resWithNotes, versions, defaultVersionId: resWithNotes?.current_revision_id || null };
+          const withVersions = {
+            ...resWithAgg,
+            versions,
+            defaultVersionId: resWithAgg?.current_revision_id || null,
+          };
           setStories(prev => prev.map(s => (s.id === withVersions.id ? withVersions : s)));
           if (withVersions?.current_revision_id) {
              setActiveRevisionId(withVersions.current_revision_id);
@@ -622,14 +732,25 @@ export default function Stories(){
             sectionId, paragraphIndex, newText: String(choice || paragraphText),
           });
           if (localApplied) {
+            const secIdx = sectionIndexById(localApplied, sectionId);
+            let nextSections = localApplied.sections;
+            if (secIdx >= 0) {
+              nextSections = [...nextSections];
+              nextSections[secIdx] = recomputeSectionFromParagraphs(nextSections[secIdx]);
+            }
+            const aggregates = deriveAggregatesFromSections(
+              nextSections,
+              (st.meta && st.meta.upstreamParams) || {}
+            );
             const saved = await updateStory(st.id, {
-              sections: localApplied.sections,
+              sections: nextSections,
               meta: {
                 ...(st.meta || {}),
                 upstreamParams: {
                   ...((st.meta && st.meta.upstreamParams) || {}),
                   mode: "regen_paragraph_vm",
                 },
+                currentAggregates: aggregates,
               },
               ...(patch.baseRevisionId ? { baseRevisionId: patch.baseRevisionId } : {}),
               ...(patch?.notes ? { notes: patch.notes } : {}),

@@ -131,7 +131,7 @@ export default function About() {
             </p>
           <ul className={styles.linkList}>
             <li>
-              <a href="mailto:alex.argese@edu.eurecom.fr" target="_blank" rel="noreferrer">
+              <a href="mailto:argese@eurecom.fr" target="_blank" rel="noreferrer">
                 Email
               </a>
             </li>
@@ -141,7 +141,7 @@ export default function About() {
               </a>
             </li>
             <li>
-              <a href="hhttps://github.com/AlexArgese/ai-scientist-storyteller" target="_blank" rel="noreferrer">
+              <a href="https://github.com/AlexArgese/ai-scientist-storyteller" target="_blank" rel="noreferrer">
                 Project Repository
               </a>
             </li>

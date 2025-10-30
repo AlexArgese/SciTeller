@@ -25,7 +25,50 @@ async function getDefaultRevision(story) {
   return rev || null;
 }
 
+// 👇 helper per ricostruire se il backend vecchio non lo aveva salvato
+function computeAggregatesFromSections(sections, meta = {}) {
+  const up = meta?.upstreamParams || {};
+  const baseLen = up.lengthPreset || "medium";
+  const baseTemp = typeof up.temp === "number" ? up.temp : 0;
+
+  if (!Array.isArray(sections) || sections.length === 0) {
+    return {
+      lengthLabel: baseLen,
+      avgTemp: baseTemp,
+      sectionsCount: 0,
+    };
+  }
+
+  const effLens = sections.map(s =>
+    s?.lengthPreset ? s.lengthPreset.toLowerCase() : baseLen.toLowerCase()
+  );
+  const allSame = effLens.every(l => l === effLens[0]);
+  const lengthLabel = allSame ? effLens[0] : "mix";
+
+  const temps = sections.map(s =>
+    typeof s?.temp === "number" ? s.temp : baseTemp
+  );
+  const avgTemp = temps.reduce((a,b)=>a+b,0) / temps.length;
+
+  return {
+    lengthLabel,
+    avgTemp,
+    sectionsCount: sections.length,
+  };
+}
+
 function materialize(story, rev) {
+  // recupero sezioni dalla revisione
+  let sections = rev?.content?.sections ?? [];
+  // recupero meta
+  const meta = rev?.meta ?? {};
+
+  // se l’aggregato non c’è, lo ricostruisco
+  const currentAggregates =
+    meta.currentAggregates ||
+    meta.aggregates ||
+    computeAggregatesFromSections(sections, meta);
+
   return {
     id: story.id,
     title: story.title,
@@ -34,8 +77,12 @@ function materialize(story, rev) {
     visibility: story.visibility,
     current_revision_id: story.currentRevisionId,
     persona: rev?.persona ?? null,
-    meta: rev?.meta ?? null,
-    sections: rev?.content?.sections ?? [],
+    // 👇 metto dentro anche gli aggregates calcolati
+    meta: {
+      ...meta,
+      currentAggregates,
+    },
+    sections,
   };
 }
 
@@ -81,6 +128,15 @@ export async function POST(req) {
     id, title, createdAt: now, updatedAt: now,
     visibility: 'private',
     current_revision_id: null,
-    persona: null, meta: null, sections: [],
+    persona: null,
+    // 👇 metto già la forma che si aspetta il frontend
+    meta: {
+      currentAggregates: {
+        lengthLabel: "medium",
+        avgTemp: 0,
+        sectionsCount: 0,
+      },
+    },
+    sections: [],
   });
 }

@@ -58,6 +58,11 @@ function materialize(story, rev) {
     if (c && Array.isArray(c.sections)) sections = c.sections;
   }
 
+  const rawMeta = rev?.meta ?? {};
+  const currentAggregates =
+    rawMeta.currentAggregates ||
+    computeAggregatesFromSections(sections, rawMeta);
+
   return {
     id: story.id,
     title: story.title,
@@ -66,10 +71,10 @@ function materialize(story, rev) {
     visibility: story.visibility,
     current_revision_id: story.currentRevisionId,
     persona: rev?.persona ?? null,
-    meta: rev?.meta ?? null,
+    meta: { ...rawMeta, currentAggregates },
     sections,
     content: rev?.content ?? null,
-    notes: rev?.notes ?? null, // esposto per retrocompatibilità UI
+    notes: rev?.notes ?? null,
   };
 }
 
@@ -158,6 +163,36 @@ function rebuildPaperTextFromSections(sections = []) {
     })
     .filter(Boolean)
     .join("\n\n");
+}
+function computeAggregatesFromSections(sections, meta = {}) {
+  const up = meta?.upstreamParams || {};
+  const baseLen = up.lengthPreset || "medium";
+  const baseTemp = typeof up.temp === "number" ? up.temp : 0;
+
+  if (!Array.isArray(sections) || sections.length === 0) {
+    return {
+      lengthLabel: baseLen,
+      avgTemp: baseTemp,
+      sectionsCount: 0,
+    };
+  }
+
+  const effLens = sections.map(s =>
+    s?.lengthPreset ? s.lengthPreset.toLowerCase() : baseLen.toLowerCase()
+  );
+  const allSame = effLens.every(l => l === effLens[0]);
+  const lengthLabel = allSame ? effLens[0] : "mix";
+
+  const temps = sections.map(s =>
+    typeof s?.temp === "number" ? s.temp : baseTemp
+  );
+  const avgTemp = temps.reduce((a,b)=>a+b,0) / temps.length;
+
+  return {
+    lengthLabel,
+    avgTemp,
+    sectionsCount: sections.length,
+  };
 }
 
 /* -------------------- POST handler -------------------- */
@@ -433,8 +468,10 @@ export async function POST(req) {
       ...secItem,
       paragraphs: nextParas,
       text: nextParas.join("\n\n"),
+      temp,
+      lengthPreset,
     };
-  });
+  });   
 
   const nextContentObj = {
     ...(effContentObj && typeof effContentObj === "object" ? effContentObj : {}),
@@ -448,8 +485,16 @@ export async function POST(req) {
     : null;
 
   // meta merged con traccia operazione + MIRROR notes in meta.notes
+  const baseMeta = prevRev?.meta || {};
+
+  // ricalcola aggregati dopo il cambio del paragrafo
+  const currentAggregates =
+    baseMeta.currentAggregates ||
+    computeAggregatesFromSections(nextSections, baseMeta);
+
   const mergedMeta = {
-    ...(prevRev?.meta || {}),
+    ...baseMeta,
+    currentAggregates,
     lastParagraphEdit: {
       at: new Date().toISOString(),
       sectionIndex,
@@ -464,8 +509,10 @@ export async function POST(req) {
       requestKey: fingerprint,
       fingerprint,
     },
-    ...(userNotes ? { notes: userNotes } : {}), // <<<<<< mirror per il Control Panel
+    ...(userNotes ? { notes: userNotes } : {}),
   };
+
+
 
   // inserisci nuova revisione
   const [inserted] = await db

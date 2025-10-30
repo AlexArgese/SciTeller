@@ -664,3 +664,20 @@ input[type="checkbox"]:active{ transform: translateY(1px); }
 @media (prefers-reduced-motion: reduce){
   .cpIndicator, .scopeIndicator{ transition: none; }
 }
+
+.label[title],
+.kvVal[title] {
+  cursor: help;
+}
+
+.tooltip {
+  background: rgba(15, 23, 42, 0.95);
+  color: #fff;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 6px 10px;
+  max-width: 240px;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.25);
+  backdrop-filter: blur(4px);
+}
