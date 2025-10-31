@@ -66,7 +66,7 @@ services:
       AUTH_URL: ${AUTH_URL}
       AUTH_DEBUG: "true"
 
-      REMOTE_GPU_URL: http://host.docker.internal:8000
+      REMOTE_GPU_URL: ${REMOTE_GPU_URL:-http://host.docker.internal:8000}
       REMOTE_API_KEY: ${REMOTE_API_KEY}
     extra_hosts:
       - "host.docker.internal:host-gateway"
