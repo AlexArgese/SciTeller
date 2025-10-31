@@ -254,6 +254,8 @@ export async function POST(req) {
         persona,
         title: s.title || "Paper",
         text: cleaned_text, 
+        cleaned_text,
+        outline, 
         sections: baseSections, 
         targets,
         temp,
