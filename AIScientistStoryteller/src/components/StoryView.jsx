@@ -20,6 +20,16 @@ function splitIntoParagraphs(txt) {
   return parts.map(s => s.trim()).filter(Boolean);
 }
 
+// ★ helper per capire qual è la revisione della story che stiamo mostrando
+function getStoryRevisionId(story) {
+  return (
+    story?.current_revision_id ||
+    story?.revisionId ||
+    story?.defaultVersionId ||
+    null
+  );
+}
+
 export default function StoryView({
   story,
   selectedParagraph,
@@ -55,24 +65,26 @@ export default function StoryView({
   const busySet = useMemo(() => new Set((busySectionIds || []).map(String)), [busySectionIds]);
   const busyParaSet = useMemo(() => new Set(busyParagraphKeys || []), [busyParagraphKeys]);
 
+  // ★ la revisione della story che sto mostrando ORA
+  const currentStoryRevisionId = getStoryRevisionId(story);
 
   const sections = useMemo(() => {
     const src = Array.isArray(story.sections) ? story.sections : [];
-  
+
     return src
       .filter(s => s?.visible !== false)
       .map((s, i) => {
         const id = String(s.id ?? s.sectionId ?? i);
-  
+
         // FONTE DI VERITÀ UNICA: narrative > text
         const sourceText =
           (typeof s.narrative === "string" && s.narrative.trim()) ||
           (typeof s.text === "string" && s.text.trim()) ||
           "";
-  
+
         // Sempre risplittare dal testo corrente
         const paragraphs = splitIntoParagraphs(sourceText);
-  
+
         return {
           ...s,
           id,
@@ -81,7 +93,6 @@ export default function StoryView({
         };
       });
   }, [story, story?.revisionId, story?.updatedAt]);
-  
 
   if (!sections.length) {
     return (
@@ -95,6 +106,16 @@ export default function StoryView({
   const sel = selectedParagraph
     ? { secId: String(selectedParagraph.sectionId), idx: Number(selectedParagraph.index) }
     : null;
+
+  // ★ se il paragrafo selezionato è stato cliccato in una revisione diversa → non mostrare carosello
+  const selectedParagraphRevisionId =
+    selectedParagraph?.clickedRevisionId ?? null;
+
+  const isSameRevisionAsParagraph =
+    !selectedParagraphRevisionId ||
+    !currentStoryRevisionId
+      ? true
+      : String(selectedParagraphRevisionId) === String(currentStoryRevisionId);
 
   return (
     <article>
@@ -157,7 +178,16 @@ export default function StoryView({
                   const effectiveText = (appliedOverrides && appliedOverrides[key]) ? appliedOverrides[key] : p;
 
                   const vCount = variantCounts && Number.isFinite(variantCounts[key]) ? Number(variantCounts[key]) : 0;
-                  const showInlineCarousel = isSel && Array.isArray(variants) && variants.length > 0;
+
+                  // ★ QUI: il carosello si vede SOLO se
+                  // - il paragrafo è selezionato
+                  // - ci sono varianti
+                  // - la revisione del paragrafo è la stessa della story che sto mostrando
+                  const showInlineCarousel =
+                    isSel &&
+                    isSameRevisionAsParagraph &&
+                    Array.isArray(variants) &&
+                    variants.length > 0;
 
                   const isParaBusy = busyParaSet.has(key);
                   const pKey = `${sec.id}:${idx}:${(effectiveText || "").slice(0, 30)}`;
@@ -178,9 +208,25 @@ export default function StoryView({
                           onClick={() => onToggleParagraph?.(sec.id, idx, effectiveText)}
                           tabIndex={0}
                           aria-selected={isSel ? "true" : "false"}
-                          title="Click to modify or view alternatives"
+                          title={
+                            isSel && !isSameRevisionAsParagraph
+                              ? "This paragraph belongs to an older revision. Regenerate it to get new alternatives."
+                              : "Click to modify or view alternatives"
+                          }
                         >
                           {effectiveText}
+                          {isSel && !isSameRevisionAsParagraph && (
+                            <span
+                              style={{
+                                display: "inline-block",
+                                marginLeft: 8,
+                                fontSize: "0.70rem",
+                                color: "#b72b2b",
+                              }}
+                            >
+                              (old revision)
+                            </span>
+                          )}
                         </p>
                       ) : (
                         <InlineParagraphCarousel
@@ -222,41 +268,41 @@ export default function StoryView({
 /* ─────────────────────────────
    Carosello inline minimal con frecce
    ───────────────────────────── */
-   function InlineParagraphCarousel({
-    items = [],
-    index = 0,
-    onPrev,
-    onNext,
-    onClickText,        // chiude il carosello (toggle paragrafo)
-    onApply,            // legacy (applicazione locale)
-    onApplyPersist,     // salva su backend (parent fa tutto)
-  }) {
-    const cur = items[index];
-    const text = typeof cur === "string" ? cur : (cur?.text ?? "");
-  
-    return (
-      <div className={styles.inlineCarousel} role="group" aria-label="Paragraph alternatives">
+function InlineParagraphCarousel({
+  items = [],
+  index = 0,
+  onPrev,
+  onNext,
+  onClickText,        // chiude il carosello (toggle paragrafo)
+  onApply,            // legacy (applicazione locale)
+  onApplyPersist,     // salva su backend (parent fa tutto)
+}) {
+  const cur = items[index];
+  const text = typeof cur === "string" ? cur : (cur?.text ?? "");
+
+  return (
+    <div className={styles.inlineCarousel} role="group" aria-label="Paragraph alternatives">
+      <button
+        className={styles.navBtnLeft}
+        type="button"
+        onClick={(e)=>{ e.stopPropagation(); onPrev?.(); }}
+        aria-label="Previous alternative"
+      >‹</button>
+
+      <div
+        className={styles.inlineCard}
+        onClick={(e)=>{ e.stopPropagation(); onClickText?.(e); }}
+        title="Click to deselect this paragraph"
+      >
         <button
-          className={styles.navBtnLeft}
-          type="button"
-          onClick={(e)=>{ e.stopPropagation(); onPrev?.(); }}
-          aria-label="Previous alternative"
-        >‹</button>
-  
-        <div
-          className={styles.inlineCard}
-          onClick={(e)=>{ e.stopPropagation(); onClickText?.(e); }}
-          title="Click to deselect this paragraph"
-        >
-          <button
             type="button"
             className={styles.selectBadge}
             onClick={(e)=>{ 
               e.stopPropagation();
               if (typeof onApplyPersist === "function") {
-                onApplyPersist(index);   // <-- delega al parent (nessun accesso a variantHistory qui)
+                onApplyPersist(index);
               } else {
-                onApply?.();             // fallback locale
+                onApply?.();
               }
             }}
             aria-label="Select this alternative"
@@ -264,17 +310,17 @@ export default function StoryView({
           >
             ✓
           </button>
-  
-          <div className={styles.inlineIndex}>#{index + 1}/{items.length}</div>
-          <div className={styles.inlineText}>{text}</div>
-        </div>
-  
-        <button
-          className={styles.navBtn}
-          type="button"
-          onClick={(e)=>{ e.stopPropagation(); onNext?.(); }}
-          aria-label="Next alternative"
-        >›</button>
+
+        <div className={styles.inlineIndex}>#{index + 1}/{items.length}</div>
+        <div className={styles.inlineText}>{text}</div>
       </div>
-    );
-  }  
+
+      <button
+        className={styles.navBtn}
+        type="button"
+        onClick={(e)=>{ e.stopPropagation(); onNext?.(); }}
+        aria-label="Next alternative"
+      >›</button>
+    </div>
+  );
+}

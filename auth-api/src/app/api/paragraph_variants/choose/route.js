@@ -179,9 +179,15 @@ export async function POST(req) {
 
     // revisione base o default
     let baseRev = null;
-    if (baseRevisionId) {
-      baseRev = await loadRevisionById(s.id, String(baseRevisionId));
-      if (!baseRev) return NextResponse.json({ error: "version not found" }, { status: 404 });
+    if (baseRevisionId && batch.revisionId && String(batch.revisionId) !== String(baseRevisionId)) {
+      // stai provando ad adottare una variante generata su un'altra revisione → errore
+      return NextResponse.json(
+        {
+          error: "mismatching revision",
+          detail: `Batch was generated on revision ${batch.revisionId}, but you requested ${baseRevisionId}`,
+        },
+        { status: 409 }
+      );
     }
     const prevRev = baseRev || (await getDefaultRevision(s));
     if (!prevRev) return NextResponse.json({ error: "no revision to apply on" }, { status: 409 });
@@ -278,8 +284,14 @@ export async function POST(req) {
         notes: `Adopted paragraph variant (sec=${sectionIndex + 1}, ¶=${paragraphIndex + 1})`,
       })
       .where(eq(storyRevisions.id, prevRev.id));
+    
+    if (!s.currentRevisionId || s.currentRevisionId !== prevRev.id) {
+      await db
+        .update(stories)
+        .set({ currentRevisionId: prevRev.id, updatedAt: new Date() })
+        .where(eq(stories.id, s.id));
+    }
 
-    // NON tocchiamo stories.currentRevisionId: resta uguale
     const [updatedStoryRow] = await db
       .select()
       .from(stories)

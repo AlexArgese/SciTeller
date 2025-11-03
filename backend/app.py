@@ -1,4 +1,4 @@
-# app.py — FastAPI for AI Scientist Storyteller (Mac backend)
+# backend/app.py — FastAPI for AI Scientist Storyteller (Mac backend)
 # run: uvicorn app:app --reload --port 8000
 
 import os, tempfile, subprocess, json, sys, pathlib, re

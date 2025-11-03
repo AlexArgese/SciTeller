@@ -31,6 +31,7 @@ export default function ControlPanel({
   onJumpToSection,
   onClosePanel,
   setCpStage = () => {},
+  onSwitchRevision = () => {},
 }) {
   const [scope, setScope] = useState("story"); // story | sections | paragraph
   useEffect(() => {
@@ -514,8 +515,12 @@ export default function ControlPanel({
     if (onChange) await onChange({ defaultVersionId: id });
   }
   async function openVersion(id) {
+    // 1. chiama comunque il backend, come prima
     if (onChange) await onChange({ currentVersionId: id, _action: "open_version" });
-  }
+  
+    // 2. ma DILLO anche al padre, così lui aggiorna activeRevisionId
+    onSwitchRevision?.(id);
+  }  
 
   const [exportFormat, setExportFormat] = useState("markdown");
   const [exportHeader, setExportHeader] = useState(true);

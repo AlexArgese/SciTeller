@@ -337,14 +337,28 @@ export async function POST(req) {
           ? { ...patched, temp, lengthPreset }
           : patched;
       });
-    }    
+    }  
+    
+    const baseUp = (baseRev?.meta?.upstreamParams) || {};
+    const baseLen = String(baseUp.lengthPreset || "medium").toLowerCase();
+    const baseTemp = Number(isFinite(baseUp.temp) ? baseUp.temp : 0);
+
+    mergedSections = mergedSections.map((sec) => ({
+      ...sec,
+      lengthPreset: String(sec?.lengthPreset || baseLen).toLowerCase(),
+      temp: (typeof sec?.temp === "number" ? sec.temp : baseTemp),
+    }));
 
     // 8) Meta: eredita + note + parent + traccia ultima partial-regen
     const baseMeta = baseRev?.meta || {};
-    const currentAggregates =
-      vmData?.meta?.currentAggregates ||
-      baseMeta.currentAggregates ||
-      computeAggregatesFromSections(mergedSections, baseMeta);
+    const currentAggregates = computeAggregatesFromSections(mergedSections, {
+      ...baseRev?.meta,
+      upstreamParams: { 
+        ...(baseRev?.meta?.upstreamParams || {}),
+        lengthPreset: baseLen,
+        temp: baseTemp,
+      },
+    });
 
 
     const mergedMeta = {

@@ -270,10 +270,12 @@ export async function PATCH(req, { params }) {
     const aggregates = computeAggregatesFromSections(nextSections, nextMeta);
 
     // 👇 2) li metto dentro la meta della revisione
+    const isFullRegen = Array.isArray(nextSections) && nextSections.length > 0; // puoi specializzarlo
     const mergedMeta = {
       ...(nextMeta ?? {}),
-      currentAggregates: aggregates,          // 👈 QUI
+      currentAggregates: aggregates,
       ...(parentId ? { parentRevisionId: parentId } : {}),
+      ...(isFullRegen ? { lastPartialRegen: undefined } : {}),
     };
   
     // 👇 3) salvo la revisione con la meta già “pulita”
