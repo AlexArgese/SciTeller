@@ -22,6 +22,8 @@ export default function Loading({
   extractMsgs = ["Extracting…"],
   storyMsgs = ["Generating…"],
   genericMsgs = ["Loading…"],
+  timeline = [],
+  currentStep = -1,
 }) {
   const TICK_MS = 2600;
   const PHASE_CHANGE_FREEZE_MS = 3200;
@@ -71,6 +73,25 @@ export default function Loading({
               {activeMsgs[tickIndex] || "Starting…"}
             </div>
           </div>
+
+          {Array.isArray(timeline) && timeline.length > 0 && (
+            <div className={styles.timeline}>
+              {timeline.map((t, i) => (
+                <div
+                  key={i}
+                  className={styles.timelineItem}
+                  aria-current={i === currentStep ? "step" : undefined}
+                >
+                  <span className={styles.timelineBullet}>
+                    {i < currentStep ? "✓" : i === currentStep ? "•" : "○"}
+                  </span>
+                  <span className={styles.timelineText}>
+                    {`${i + 1}. ${t}`}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
 
           <div className={styles.caption}>
             Please keep this tab open while we work.

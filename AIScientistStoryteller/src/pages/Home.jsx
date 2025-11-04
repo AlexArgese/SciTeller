@@ -4,6 +4,7 @@ import { explainPdfAndUpdate } from "../services/explainApi.js";
 import { createStory, updateStory, deleteStory } from "../services/storiesApi.js";
 import styles from "./Home.module.css";
 import Loading from "../components/Loading.jsx";
+const API_BASE = import.meta.env.VITE_API_BASE || "/svc";
 
 // ===== Personas (icone stilizzate + caption dinamica) =====
 const PERSONAS = [
@@ -108,6 +109,9 @@ async function fetchPdfAsFile(rawUrl) {
 function normalizeFromApiSections(apiSections) { /* …non usata qui… */ return apiSections; }
 
 export default function Home() {
+  const [outlineTitles, setOutlineTitles] = useState([]);
+  const [currentSection, setCurrentSection] = useState(-1);
+
   const fileRef = useRef(null);
   const dropRef = useRef(null);
 
@@ -174,8 +178,53 @@ export default function Home() {
   const RE_START_DOCPARSE = /start\s*docparse/i;
   const RE_START_STORY = /(start\s*story|two-?stage\s*(vm|story)|start\s*generation)/i;
 
-  const handleBackendLog = (line = "") => {
-    const L = String(line);
+  const handleBackendLog = (data) => {
+    // data è JSON stringa dall'SSE
+    let evt;
+    try { evt = typeof data === "string" ? JSON.parse(data) : data; } catch { return; }
+    const t = evt?.type;
+
+    if (t === "parsing_start") {
+      setPhase("extract");
+      return;
+    }
+    if (t === "parsing_done") {
+      // resta in extract finché non parte la story (guard già presente)
+      return;
+    }
+    if (t === "generation_start") {
+      setPhase("story");
+      return;
+    }
+    if (t === "outline_ready" && Array.isArray(evt.titles)) {
+      setOutlineTitles(evt.titles);
+      setCurrentSection(-1);
+      // se non sei già in "story", passaci
+      setPhase((p) => (p === "extract" ? "story" : p));
+      return;
+    }
+    if (t === "section_start") {
+      // { index, total, title }
+      if (typeof evt.index === "number") {
+        setCurrentSection(evt.index);
+      }
+      // messaggio dinamico nel ticker:
+      if (evt.title) {
+        // forza il messaggio attivo in Loading col titolo (lo passa via props)
+      }
+      return;
+    }
+    if (t === "section_done") {
+      // opzionale: potresti marcare completata la sezione evt.index
+      return;
+    }
+    if (t === "all_done") {
+      // la navigazione viene già fatta quando la POST /api/explain finisce
+      return;
+    }
+
+    // fallback: vecchi log in plain text
+    const L = String(data || "");
     if (RE_START_DOCPARSE.test(L)) {
       if (phase !== "extract") setPhase("extract");
     } else if (RE_START_STORY.test(L)) {
@@ -183,14 +232,19 @@ export default function Home() {
     }
   };
 
+
   const attachExplainLogsSSE = (jobId) => {
     try {
-      const es = new EventSource(`/api/explain/logs?jobId=${encodeURIComponent(jobId)}`);
+      const url = `${API_BASE}/api/explain/logs?jobId=${encodeURIComponent(jobId)}`;
+      const es = new EventSource(url, { withCredentials: false });
       sseRef.current = es;
-      es.onmessage = (ev) => { if (ev?.data) handleBackendLog(ev.data); };
-      es.onerror = () => { es.close(); };
+      es.onmessage = (ev) => {
+        if (ev?.data) handleBackendLog(ev.data);
+      };
+      es.onerror = () => { try { es.close(); } catch {} };
     } catch {}
   };
+
 
   useEffect(() => {
     if (guardTimerRef.current) {
@@ -286,6 +340,11 @@ export default function Home() {
       setPhase("extract");
       handleBackendLog("[/api/explain] start docparse");
 
+      // 0) crea un job per i progress e attacca l’SSE
+      const jobResp = await fetch(`${API_BASE}/api/explain/new_job`, { method: "POST" });
+      const { jobId } = await jobResp.json();
+      attachExplainLogsSSE(jobId);      
+
       // 1) prepara il PDF (upload o proxy)
       let pdfFile = fileObj;
       if (!pdfFile && link.trim()) {
@@ -315,7 +374,7 @@ export default function Home() {
 
       try {
         // 4) genera **e salva**
-        await explainPdfAndUpdate(created.id, { file: pdfFile, persona, options });
+        await explainPdfAndUpdate(created.id, { file: pdfFile, persona, options, jobId });
         // 5) ok → vai alle stories
         navigate("/stories");
       } catch (innerErr) {
@@ -351,13 +410,15 @@ export default function Home() {
           "Cleaning layout and artifacts…",
         ]}
         storyMsgs={[
-          "Generating storyline…",
-          "Identifying key sections…",
-          "Drafting the first section…",
+          currentSection >= 0 && outlineTitles[currentSection]
+            ? `Generating section ${currentSection + 1}/${outlineTitles.length}: “${outlineTitles[currentSection]}”…`
+            : "Preparing outline…",
           "Adapting tone to persona…",
           "Refining transitions…",
         ]}
         genericMsgs={["Working…"]}
+        timeline={outlineTitles}
+        currentStep={currentSection}
       />
     );
   }

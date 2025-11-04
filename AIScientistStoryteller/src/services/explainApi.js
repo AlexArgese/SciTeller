@@ -11,12 +11,14 @@ function adaptTwoStageResponse(data) {
   };
 }
 
-export async function explainPdf({ file, persona, options = {} }) {
+export async function explainPdf({ file, persona, options = {}, jobId = null }) {
   if (!file) throw new Error("Nessun PDF selezionato");
 
   const fd = new FormData();
   fd.append("persona", persona || "Student");
   fd.append("file", file);
+  if (jobId) fd.append("jobId", String(jobId));
+
 
   if (options.length) fd.append("length", options.length);
   if (options.limit_sections != null) fd.append("limit_sections", String(options.limit_sections));
@@ -47,8 +49,8 @@ export async function explainPdf({ file, persona, options = {} }) {
   return adaptTwoStageResponse(data);
 }
 
-export async function explainPdfAndUpdate(storyId, { file, persona, options = {} }) {
-  const adapted = await explainPdf({ file, persona, options }); 
+export async function explainPdfAndUpdate(storyId, { file, persona, options = {}, jobId = null }) {
+  const adapted = await explainPdf({ file, persona, options, jobId });
 
   const aiTitle = (adapted?.title || "").trim();
 

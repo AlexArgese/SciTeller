@@ -10,6 +10,13 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 import requests
 
+# === NEW: progress broker / SSE / misc ===
+import asyncio, uuid
+from fastapi import Request, Query
+from fastapi.responses import StreamingResponse
+
+PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")  
+
 load_dotenv()
 
 # ===== Prompt builder (porting) =====
@@ -190,6 +197,40 @@ app = FastAPI(
 
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
+# ========= Progress endpoints =========
+
+@app.post("/api/explain/new_job", tags=["Explain"])
+def new_job():
+    job_id = str(uuid.uuid4())
+    _ensure_queue(job_id)
+    return {"jobId": job_id}
+
+@app.get("/api/explain/logs", tags=["Explain"])
+async def explain_logs(jobId: str = Query(..., alias="jobId")):
+    # SSE stream
+    headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "Content-Type": "text/event-stream",
+    }
+    return StreamingResponse(_sse_stream(jobId), headers=headers)
+
+@app.post("/api/explain/progress", tags=["Explain"])
+async def vm_progress(
+    request: Request,
+    jobId: str = Query(..., alias="jobId"),
+    key: str | None = Query(None),
+    body: dict = Body(...)
+):
+    # Autorizzazione: header X-API-Key o query ?key=
+    api_key_hdr = request.headers.get("X-API-Key")
+    if (api_key_hdr or key) != (REMOTE_API_KEY or ""):
+        raise HTTPException(403, "forbidden")
+
+    # Rilancia l'evento verso i client SSE
+    await _emit_async(jobId, body)
+    return {"ok": True}
+
 # ========= Schemas =========
 class StorySectionIn(BaseModel):
     title: str
@@ -347,6 +388,39 @@ def _normalize_sections(sections: list[dict]) -> list[dict]:
         })
     return out
 
+# ========= SIMPLE PROGRESS BROKER (in-memory) =========
+_jobs_queues: dict[str, asyncio.Queue] = {}
+
+def _ensure_queue(job_id: str) -> asyncio.Queue:
+    q = _jobs_queues.get(job_id)
+    if q is None:
+        q = asyncio.Queue()
+        _jobs_queues[job_id] = q
+    return q
+
+async def _emit_async(job_id: str, event: dict):
+    q = _ensure_queue(job_id)
+    await q.put(event)
+
+def _emit(job_id: str, event: dict):
+    try:
+        q = _ensure_queue(job_id)
+        q.put_nowait(event)
+    except Exception:
+        pass
+
+async def _sse_stream(job_id: str):
+    q = _ensure_queue(job_id)
+    # invia un saluto per agganciare il client
+    yield f"event: hello\ndata: {json.dumps({'jobId': job_id})}\n\n"
+    while True:
+        event = await q.get()
+        try:
+            payload = json.dumps(event, ensure_ascii=False)
+        except Exception:
+            payload = json.dumps({"type": "error", "detail": "bad_event"})
+        yield f"event: message\ndata: {payload}\n\n"
+
 # ========= Routes =========
 @app.get(
     "/health",
@@ -365,6 +439,8 @@ def health():
     response_model=ExplainResponse,
 )
 async def explain_endpoint(
+    request: Request,
+    jobId: str = Form(None, description="Progress job id (SSE)"),
     persona: str = Form(..., description="Target persona/audience (e.g., Journalist, General Public, Student, Expert)."),
     file: UploadFile = File(..., description="Paper PDF file."),
     length: str = Form("medium", description="Length preset: short | medium | long."),
@@ -379,10 +455,14 @@ async def explain_endpoint(
     retriever_model: str | None = Form(None),
     seg_words: int | None = Form(None),
     overlap_words: int | None = Form(None),
-
 ):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(400, "Please upload a .pdf")
+    
+    # progress: job id
+    job_id = (jobId or str(uuid.uuid4()))
+    try: _emit(job_id, {"type": "parsing_start"})
+    except: pass
 
     # 1) Salva PDF temporaneo
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
@@ -440,7 +520,14 @@ async def explain_endpoint(
         }
     }
 
+    if PUBLIC_BASE_URL:
+        cb = f"{PUBLIC_BASE_URL}/api/explain/progress?jobId={job_id}"
+        payload["callback_url"] = cb
+
     data = _gpu("/api/two_stage_story", payload, timeout=3000)
+    try: _emit(job_id, {"type": "all_done"})
+    except: pass
+
     for s in data.get("sections", []):
         if "narrative" not in s and "text" in s:
             s["narrative"] = s["text"]

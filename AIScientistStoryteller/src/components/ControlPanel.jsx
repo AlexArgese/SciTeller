@@ -1331,7 +1331,6 @@ function InfoTab({
                       <span>Creativity:</span>
                       <b>
                         {Math.round((effTemp || 0) * 100)}%
-                        {hasTempOverride ? " •" : ""}
                       </b>
                     </div>
 
@@ -1339,7 +1338,6 @@ function InfoTab({
                       <span>Length:</span>
                       <b>
                         {capFirst(String(effLen))}
-                        {hasLenOverride ? " •" : ""}
                       </b>
                     </div>
                   </li>
