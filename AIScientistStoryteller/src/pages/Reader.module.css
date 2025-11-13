@@ -1,0 +1,207 @@
+
+/* =========================
+   Reader — PDF + Story split
+   ========================= */
+
+/* Grid principale (2 colonne) */
+.page {
+  display: grid;
+  grid-template-columns: minmax(420px, 1fr) minmax(420px, 1fr);
+  gap: var(--sp-10);
+  width: min(1600px, 96vw);
+  margin: calc(var(--nav-h) + 30px) auto;
+  padding-inline: var(--sp-3);
+  align-items: center;
+
+  /* unico punto verità per sticky offset */
+  --sticky-top: calc(var(--nav-h) + var(--sp-2));
+}
+
+/* wrapper colonna sinistra (PDF) */
+.left {
+  position: sticky;
+  top: var(--sp-3);
+  align-self: start;
+}
+
+/* card PDF (coerente con altre card/glass) */
+.viewerCard {
+  background: var(--panel);
+  border: 1px solid var(--line-0);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-1);
+  padding: var(--sp-2);
+}
+
+/* header della card PDF (Back + etichetta PDF) */
+.viewerHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px var(--sp-2);
+}
+
+/* bottone back: usa i tuoi stili globali */
+.backBtn {
+  composes: btn btn-primary from global;
+  background: var(--glass-blue-bg);
+  color: #fff;
+  font-weight: 700;
+  box-shadow: var(--glass-blue-sd);
+  height: 36px;
+  padding: 0 var(--sp-3);
+  border-radius: 999px;
+  line-height: 36px;
+}
+
+/* piccolo tag “PDF” a destra */
+.pdfTag {
+  font-size: var(--fs-small);
+  color: var(--text-2);
+  opacity: .8;
+}
+
+/* contenitore del PdfViewer per arrotondare canvas/iframe */
+.viewerBody {
+  margin-top: var(--sp-2);
+  border-radius: var(--r-md);
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgba(0,0,0,.06);
+}
+
+/* garantisce sfondo neutro dietro al PDF */
+.viewerBody :global(canvas),
+.viewerBody :global(iframe) {
+  display: block;
+  background: #fff;
+}
+
+/* colonna destra (Story) */
+.right {}
+
+/* card storia (coerente con card/glass) */
+.storyCard {
+  background: var(--panel);
+  border: 1px solid var(--line-0);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-1);
+  padding: calc(var(--sp-3) + 4px) var(--sp-4);
+}
+
+/* header storia: “Story — Section view” + titolo */
+.storyHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--sp-2);
+}
+
+/* etichetta sopra il titolo */
+.storyKicker {
+  font-size: var(--fs-small);
+  color: var(--text-2);
+  opacity: .85;
+}
+
+/* titolo storia/doc */
+.storyTitle {
+  font-weight: 600;
+  color: var(--heading);
+}
+
+/* stato di caricamento */
+.loading {
+  color: var(--text-2);
+  opacity: .85;
+}
+
+/* stato: mancano i dati di navigazione */
+.missingWrap {
+  width: min(980px, 96vw);
+  margin: var(--sp-6) auto;
+  padding: 0 var(--sp-3);
+}
+
+.missingCard {
+  background: color-mix(in oklab, #ff0000 6%, var(--panel));
+  border: 1px solid color-mix(in oklab, #a40000 35%, var(--line-0));
+  color: color-mix(in oklab, #a40000 70%, var(--text));
+  border-radius: var(--r-lg);
+  padding: var(--sp-4);
+}
+
+/* bottone back anche nella view “missing” */
+.missingBack {
+  background: var(--glass-blue-bg);
+  margin-bottom: var(--sp-3);
+}
+
+/* Utility: nascondi elementi quando serve */
+.hidden { display: none !important; }
+
+/* =========================
+   Responsive
+   ========================= */
+
+@media (max-width: 1200px) {
+  .page {
+    grid-template-columns: 1fr;
+    gap: var(--sp-3);
+  }
+  .left {
+    position: relative;
+    top: 0;
+  }
+  .viewerCard {
+    border-radius: var(--r-lg);
+  }
+  .storyCard {
+    margin-top: 0;
+  }
+}
+
+/* =========================
+   Riduzione motion
+   ========================= */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+
+
+/* =========================
+   Integrazioni specifiche
+   ========================= */
+
+/* Se il PdfViewer espone errori inline, rendili coerenti */
+.viewerBody :global(.pdf-error) {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-line);
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  backdrop-filter: blur(var(--glass-blur));
+  padding: var(--sp-3);
+  border-radius: var(--r-md);
+  color: var(--text);
+}
+
+/* Se evidenzi gli highlights nel PDF, dai un alone soft */
+.viewerBody :global(.pdf-highlight) {
+  outline: 2px solid color-mix(in oklab, var(--accent) 55%, transparent);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 6px color-mix(in oklab, var(--accent) 12%, transparent);
+  border-radius: 6px;
+}
+
+/* Variante “glass” opzionale per la storyCard (se vuoi) */
+.storyCardGlass {
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--glass-line);
+  box-shadow: var(--glass-sd);
+}

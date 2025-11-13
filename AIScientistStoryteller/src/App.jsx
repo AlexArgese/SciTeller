@@ -5,6 +5,7 @@ import Home from "./pages/Home.jsx";
 import Stories from "./pages/Stories.jsx";
 import About from "./pages/About.jsx";
 import Login from "./pages/Login.jsx";
+import Reader from "./pages/Reader.jsx";
 import { useEffect } from 'react';
 import 'reactflow/dist/style.css';
 
@@ -29,6 +30,7 @@ export default function App() {
         <Route path="/stories" element={<Stories />} />
         <Route path="/about" element={<About />} />
         <Route path="/login" element={<Login />} /> 
+        <Route path="/reader" element={<Reader />} />
       </Routes>
       <Footer />
     </>

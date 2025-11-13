@@ -665,6 +665,13 @@ input[type="checkbox"]:active{ transform: translateY(1px); }
   .cpIndicator, .scopeIndicator{ transition: none; }
 }
 
+.rowActions {
+  display: flex;
+  flex-direction: column-reverse;
+  justify-content: space-between;
+  align-items: end;
+  gap: 10px
+}
 .label[title],
 .kvVal[title] {
   cursor: help;

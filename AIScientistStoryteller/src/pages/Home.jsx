@@ -1,6 +1,6 @@
 import { useRef, useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { explainPdfAndUpdate } from "../services/explainApi.js";
+import { explainPdfAndUpdate, attachPaperToStory } from "../services/explainApi.js";
 import { createStory, updateStory, deleteStory } from "../services/storiesApi.js";
 import styles from "./Home.module.css";
 import Loading from "../components/Loading.jsx";
@@ -368,13 +368,28 @@ export default function Home() {
       };
 
 
-      // 3) crea story provvisoria (solo ora)
+      // 3) crea story provvisoria
       const provisional = pdfFile?.name || "Story";
       const created = await createStory(provisional);
 
       try {
+          // ✅ SEMPRE: se c'è un link, registralo in DB e attaccalo alla story
+          let linkMeta = null;
+          if (link.trim()) {
+            linkMeta = await attachPaperToStory(created.id, { link: link.trim() });
+          }
         // 4) genera **e salva**
         await explainPdfAndUpdate(created.id, { file: pdfFile, persona, options, jobId });
+        // ✅ Se vogliamo “solo link”, ri-applica il link nella meta (preserva contro overwrite)
+        if (linkMeta?.paperId || linkMeta?.paperUrl) {
+          await updateStory(created.id, {
+            meta: {
+              ...(created.meta || {}),
+              paperId: linkMeta.paperId || created?.meta?.paperId || null,
+              paperUrl: linkMeta.paperUrl || created?.meta?.paperUrl || null,
+            }
+          });
+        }
         // 5) ok → vai alle stories
         navigate("/stories");
       } catch (innerErr) {

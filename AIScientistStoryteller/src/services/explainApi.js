@@ -54,12 +54,22 @@ export async function explainPdfAndUpdate(storyId, { file, persona, options = {}
 
   const aiTitle = (adapted?.title || "").trim();
 
+  let current = null;
+  try {
+    const r = await fetch(`/api/stories/${encodeURIComponent(storyId)}`, {
+      method: "GET", credentials: "include", cache: "no-store",
+    });
+    current = r.ok ? await r.json() : null;
+  } catch {}
+
   const patch = {
     title: aiTitle,
     persona: adapted?.persona || "General Public",
     sections: Array.isArray(adapted?.sections) ? adapted.sections : [],
     meta: {
       ...(adapted?.meta || {}),
+      ...(current?.meta?.paperId ? { paperId: current.meta.paperId } : {}),
+      ...(current?.meta?.paperUrl ? { paperUrl: current.meta.paperUrl } : {}),
       docTitle: adapted?.docTitle || null,
       aiTitle,
     },
@@ -81,4 +91,66 @@ export async function explainPdfAndUpdate(storyId, { file, persona, options = {}
     return adapted;
   }
   return d;
+}
+
+export async function intakePaper({ file, link }) {
+  const url = `${API_BASE}/api/papers/intake`;
+
+  if (file) {
+    const fd = new FormData();
+    fd.append("file", file, file.name);
+    const res = await fetch(url, { method: "POST", body: fd });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.detail || data?.error || "Failed POST /api/papers/intake (file)");
+    return { paperId: data.paper_id, paperUrl: data.paper_url, dedup: !!data.dedup };
+  }
+
+  if (link) {
+    // ⬇️ INVIARE COME FORM-DATA, NON JSON
+    const fd = new FormData();
+    fd.append("link", link);
+    const res = await fetch(url, { method: "POST", body: fd });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.detail || data?.error || "Failed POST /api/papers/intake (link)");
+    return { paperId: data.paper_id, paperUrl: data.paper_url, dedup: !!data.dedup };
+  }
+
+  throw new Error("intakePaper: need file or link");
+}
+
+export async function attachPaperToStory(storyId, { file, link }) {
+  if (!storyId) throw new Error("attachPaperToStory: missing storyId");
+  if (!file && !link) throw new Error("attachPaperToStory: pass file or link");
+
+  // 1) intake → ottieni { paperId, paperUrl }
+  const { paperId, paperUrl } = await intakePaper({ file, link });
+
+  // 2) prendi la story corrente per preservare il meta esistente
+  const getRes = await fetch(`/api/stories/${encodeURIComponent(storyId)}`, {
+    method: "GET",
+    credentials: "include",
+    cache: "no-store",
+  });
+  const story = await getRes.json().catch(() => ({}));
+  if (!getRes.ok) throw new Error(story?.detail || "Unable to load story to update meta");
+
+  const nextMeta = {
+    ...(story?.meta || {}),
+    paperId,
+    paperUrl, // 👈 usato da Stories.jsx → handleReadOnPaper
+  };
+
+  // 3) PATCH con il meta aggiornato
+  const patch = { meta: nextMeta };
+  const upRes = await fetch(`/api/stories/${encodeURIComponent(storyId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    cache: "no-store",
+    body: JSON.stringify(patch),
+  });
+  const upd = await upRes.json().catch(() => ({}));
+  if (!upRes.ok) throw new Error(upd?.detail || "Failed to attach paper to story");
+
+  return { paperId, paperUrl };
 }

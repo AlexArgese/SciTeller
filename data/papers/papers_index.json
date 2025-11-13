@@ -1,0 +1,21 @@
+{
+  "by_id": {
+    "c9f0a3e8-dabe-458f-9dd3-96b0af8900de": {
+      "id": "c9f0a3e8-dabe-458f-9dd3-96b0af8900de",
+      "source_type": "upload",
+      "file_path": "/data/papers/c9f0a3e8-dabe-458f-9dd3-96b0af8900de/source.pdf",
+      "url": null,
+      "sha256": "427058a5bd29b4879a7cebcfc591ab43f21c4ce121240b72ca96d2faa7612397",
+      "doi": null,
+      "title": null,
+      "first_author": null,
+      "title_first_norm": null
+    }
+  },
+  "by_sha256": {
+    "427058a5bd29b4879a7cebcfc591ab43f21c4ce121240b72ca96d2faa7612397": "c9f0a3e8-dabe-458f-9dd3-96b0af8900de"
+  },
+  "by_doi": {},
+  "by_url": {},
+  "by_title_first": {}
+}

@@ -11,6 +11,7 @@ pypdf
 pdfplumber
 pdf2image
 PyMuPDF
+sentence-transformers==2.7.0
 
 # ---- vendor docparsing deps (pure python + ML)
 numpy
@@ -48,3 +49,5 @@ stringzilla
 
 # ---- (opzionale) SDK VertexAI usato dal parser, già incluso in google-cloud-aiplatform
 google-cloud-aiplatform
+
+psycopg2-binary==2.9.9

@@ -707,6 +707,7 @@ export default function ControlPanel({
                 sectionTemp={sectionTemp}
                 setSectionTemp={setSectionTemp}
                 onContinue={(payload) => openNotes({ type: "sections", payload })}
+                onReadOnPaper={onReadOnPaper}
               />
             )}
 
@@ -901,6 +902,7 @@ function SectionsControls({
   sectionTemp,
   setSectionTemp,
   onContinue,
+  onReadOnPaper,
 }) {
   return (
     <div className={`${styles.section} ${styles.blueCard}`}>
@@ -985,19 +987,33 @@ function SectionsControls({
             ? "Select at least one section."
             : `${selectedSectionIds.length} selected`}
         </div>
-        <button
-          className={styles.primary}
-          disabled={selectedSectionIds.length === 0}
-          onClick={() =>
-            onContinue({
-              sectionIds: selectedSectionIds,
-              temp: clamp01(sectionTemp),
-              lengthPreset,
-            })
-          }
-        >
-          Continue
-        </button>
+
+        <div className={styles.rowActions}>
+          {selectedSectionIds.length === 1 && (
+            <button
+              className={styles.ghostBtn}
+              type="button"
+              title="Open PDF at this section"
+              onClick={() => onReadOnPaper?.({ sectionId: selectedSectionIds[0] })}
+            >
+              Read section on paper
+            </button>
+          )}
+
+          <button
+            className={styles.primary}
+            disabled={selectedSectionIds.length === 0}
+            onClick={() =>
+              onContinue({
+                sectionIds: selectedSectionIds,
+                temp: clamp01(sectionTemp),
+                lengthPreset,
+              })
+            }
+          >
+            Continue
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -1118,33 +1134,52 @@ function ParagraphControls({
             <div className={styles.noteInfo}>
               Generate 1–3 alternatives, then pick and apply directly in the story.
             </div>
-            <button
-              className={styles.primary}
-              onClick={() => {
-                if (!selectedParagraph) return;
-                onGenerate({
-                  sectionId: selectedParagraph.sectionId,
-                  paragraphIndex: selectedParagraph.index,
-                  paragraphText: selectedParagraph.text,
-                  ops: {
-                    paraphrase: !!pOps.paraphrase,
-                    simplify: !!pOps.simplify,
-                    temp: clamp01(pOps.temp),
-                    n: clampN(pOps.n),
-                    top_p: 0.9,
-                    length_preset: pLenPreset,
-                    length_op:
-                      pLenPreset === "short"
-                        ? "shorten"
-                        : pLenPreset === "long"
-                        ? "lengthen"
-                        : "keep",
-                  },
-                });
-              }}
-            >
-              Continue
-            </button>
+
+            <div className={styles.rowActions}>
+              <button
+                className={styles.ghostBtn}
+                type="button"
+                disabled={!selectedParagraph}
+                title={selectedParagraph ? "Open PDF at this paragraph" : "Select a paragraph first"}
+                onClick={() => {
+                  if (!selectedParagraph) return;
+                  onReadOnPaper?.({
+                    sectionId: selectedParagraph.sectionId,
+                    paragraphIndex: selectedParagraph.index, // 👈 passiamo anche l’indice del paragrafo
+                  });
+                }}
+              >
+                Read on paper
+              </button>
+
+              <button
+                className={styles.primary}
+                onClick={() => {
+                  if (!selectedParagraph) return;
+                  onGenerate({
+                    sectionId: selectedParagraph.sectionId,
+                    paragraphIndex: selectedParagraph.index,
+                    paragraphText: selectedParagraph.text,
+                    ops: {
+                      paraphrase: !!pOps.paraphrase,
+                      simplify: !!pOps.simplify,
+                      temp: clamp01(pOps.temp),
+                      n: clampN(pOps.n),
+                      top_p: 0.9,
+                      length_preset: pLenPreset,
+                      length_op:
+                        pLenPreset === "short"
+                          ? "shorten"
+                          : pLenPreset === "long"
+                          ? "lengthen"
+                          : "keep",
+                    },
+                  });
+                }}
+              >
+                Continue
+              </button>
+            </div>
           </div>
         </>
       )}

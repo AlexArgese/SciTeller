@@ -6,18 +6,88 @@ import animationData from "../assets/data.json";
 
 function splitIntoParagraphs(txt) {
   if (!txt) return [];
-  let clean = String(txt).replace(/\r\n/g, "\n").replace(/\u00a0/g, " ").trim();
+  const clean = normalizeStoryText(txt);
   let parts = clean.split(/\n{2,}|\r?\n\s*\r?\n/g);
   if (parts.length === 1) {
-    parts = clean
-      .split(/([.!?])\s+(?=[A-ZÀ-ÖØ-Ý])/g)
-      .reduce((acc, chunk, i, arr) => {
-        if (/[.!?]/.test(chunk) && arr[i + 1]) acc.push((arr[i - 1] || "") + chunk);
-        else if (i === arr.length - 1) acc.push(chunk);
-        return acc;
-      }, []);
+    const chunks = clean.split(/([.!?])\s+(?=[A-ZÀ-ÖØ-Ý])/g);
+    parts = chunks.reduce((acc, chunk, i, arr) => {
+      if (/[.!?]/.test(chunk) && arr[i + 1]) acc.push((arr[i - 1] || "") + chunk);
+      else if (i === arr.length - 1) acc.push(chunk);
+      return acc;
+    }, []);
   }
   return parts.map(s => s.trim()).filter(Boolean);
+}
+function tryParseObject(str) {
+  try { return JSON.parse(str); } catch { return null; }
+}
+
+function looksEscapedJson(str) {
+  return /^\s*\{\s*\\?"title\\?"\s*:/.test(str) || /^\s*\\?\{\\?"title\\?"/.test(str);
+}
+
+/**
+ * Estrae SOLO il campo `text` se `raw` contiene un wrapper tipo
+ * {"title":"...","text":"..."} oppure la stessa cosa escape-ata con backslash.
+ * Altrimenti ritorna `raw` com'è (ripulito).
+ */
+function stripJsonLikeWrapper(raw) {
+  if (raw == null) return "";
+  let t = String(raw).trim();
+
+  // 0) se è già un oggetto serialized standard
+  const obj0 = tryParseObject(t);
+  if (obj0 && typeof obj0.text === "string") return obj0.text;
+
+  // 1) se è un JSON escape-ato (es. con \" e \\n)
+  if (looksEscapedJson(t)) {
+    // unescape singolo giro e riprova il parse
+    const once = t
+      .replace(/\\\\/g, "\\")
+      .replace(/\\"/g, "\"")
+      .replace(/\\n/g, "\n")
+      .replace(/\\r/g, "")
+      .replace(/\\t/g, "\t");
+    const obj1 = tryParseObject(once);
+    if (obj1 && typeof obj1.text === "string") return obj1.text;
+
+    // 2) fallback regex: prendi tutto dopo text":" fino alla prossima " non-escapata
+    const m = once.match(/"text"\s*:\s*"((?:\\.|[^"\\])*)"/s);
+    if (m) {
+      return m[1]
+        .replace(/\\n/g, "\n")
+        .replace(/\\r/g, "")
+        .replace(/\\t/g, "\t")
+        .replace(/\\"/g, "\"")
+        .replace(/\\\\/g, "\\")
+        .trim();
+    }
+  }
+
+  // 3) altro fallback: pattern non-escapato
+  const m2 = t.match(/^\s*\{\s*"title"\s*:\s*".*?",\s*"text"\s*:\s*"((?:\\.|[^"\\])*)"\s*\}\s*$/s);
+  if (m2) {
+    return m2[1]
+      .replace(/\\n/g, "\n")
+      .replace(/\\r/g, "")
+      .replace(/\\t/g, "\t")
+      .replace(/\\"/g, "\"")
+      .replace(/\\\\/g, "\\")
+      .trim();
+  }
+
+  // 4) pulizia leggera se arrivano virgolette spurie all'inizio/fine
+  if ((t.startsWith('"') && t.endsWith('"')) || (t.startsWith("“") && t.endsWith("”"))) {
+    t = t.slice(1, -1);
+  }
+  return t;
+}
+
+function normalizeStoryText(txt) {
+  let s = String(txt ?? "");
+  s = s.replace(/\r\n/g, "\n").replace(/\u00a0/g, " ");
+  s = s.replace(/？/g, "?"); // question mark pieno → ASCII
+  return s.trim();
 }
 
 // ★ helper per capire qual è la revisione della story che stiamo mostrando
@@ -51,6 +121,7 @@ export default function StoryView({
   appliedOverrides = {}, // { ["<secId>:<idx>"]: "<testo applicato>" }
   onApplyInlineVariant = () => {}, // (secId, idx, text) => void
   onPersistInlineVariant = () => {}, // ✅ VIENE DAL PARENT (Stories)
+  onReadOnPaper = () => {},
 }) {
   if (!story) return <div className={styles.empty}></div>;
 
@@ -70,21 +141,21 @@ export default function StoryView({
 
   const sections = useMemo(() => {
     const src = Array.isArray(story.sections) ? story.sections : [];
-
+  
     return src
       .filter(s => s?.visible !== false)
       .map((s, i) => {
         const id = String(s.id ?? s.sectionId ?? i);
-
-        // FONTE DI VERITÀ UNICA: narrative > text
-        const sourceText =
+  
+        // narrative > text, poi unwrap aggressivo
+        const rawText =
           (typeof s.narrative === "string" && s.narrative.trim()) ||
           (typeof s.text === "string" && s.text.trim()) ||
           "";
-
-        // Sempre risplittare dal testo corrente
-        const paragraphs = splitIntoParagraphs(sourceText);
-
+  
+        const unwrapped = stripJsonLikeWrapper(rawText);
+        const paragraphs = splitIntoParagraphs(unwrapped);
+  
         return {
           ...s,
           id,
@@ -92,7 +163,7 @@ export default function StoryView({
           paragraphs: paragraphs.length ? paragraphs : ["(no text)"],
         };
       });
-  }, [story, story?.revisionId, story?.updatedAt]);
+  }, [story, story?.revisionId, story?.updatedAt]);  
 
   if (!sections.length) {
     return (
@@ -148,8 +219,30 @@ export default function StoryView({
                 e.stopPropagation();
                 if (!isBusy) onSelectSection?.(sec.id);
               }}
+              style={{ display: "flex", alignItems: "center", gap: 8 }}
             >
-              {sec.title}
+              <span style={{ flex: "1 1 auto" }}>{sec.title}</span>
+
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();          // non far “selezionare” la sezione
+                  onReadOnPaper?.({ sectionId: sec.id });
+                }}
+                title="Read this section on paper"
+                aria-label="Read this section on paper"
+                style={{
+                  flex: "0 0 auto",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  width: 28,
+                  height: 28,
+                  cursor: "pointer",
+                }}
+              >
+                <PaperIcon />
+              </button>
             </h3>
 
             {isBusy ? (
@@ -322,5 +415,22 @@ function InlineParagraphCarousel({
         aria-label="Next alternative"
       >›</button>
     </div>
+  );
+}
+
+function PaperIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      role="img"
+      aria-hidden="true"
+    >
+      <path
+        d="M14 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7.5L14 2zm0 1.5L18.5 8H14V3.5zM8 11h8v1.5H8V11zm0 3h8v1.5H8V14zm0 3h6v1.5H8V17z"
+        fill="currentColor"
+      />
+    </svg>
   );
 }

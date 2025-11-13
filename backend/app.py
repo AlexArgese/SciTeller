@@ -3,7 +3,7 @@
 
 import os, tempfile, subprocess, json, sys, pathlib, re
 from typing import Optional, List, Dict, Any
-
+import uuid
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -351,6 +351,30 @@ generate_from_text_example = {
     }
 }
 
+# === DB helpers ===
+import psycopg2
+from contextlib import contextmanager
+
+DATABASE_URL = os.environ.get("DATABASE_URL")  # es: postgres://aisci:***@postgres:5432/aisci_storyteller
+
+@contextmanager
+def db_conn():
+    if not DATABASE_URL:
+        raise RuntimeError("DATABASE_URL non configurato")
+    conn = psycopg2.connect(DATABASE_URL)
+    conn.autocommit = True
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+def _norm_url(u: str) -> str:
+    if not u: return u
+    u = u.strip()
+    if u.endswith("/"): u = u[:-1]
+    return u
+
 
 # ========= Helpers =========
 def _headers():
@@ -459,6 +483,31 @@ async def explain_endpoint(
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(400, "Please upload a .pdf")
     
+    # --- [A] Salva PDF remoto su VM per la visualizzazione successiva ---
+    pdf_bytes = await file.read()
+    paper_id = str(uuid.uuid4())
+    file_url = None
+
+    try:
+        files = {"file": (file.filename, pdf_bytes, "application/pdf")}
+        data_upload = {"paper_id": paper_id}
+        r = requests.post(f"{REMOTE_GPU_URL}/papers/upload", files=files, data=data_upload, timeout=60)
+        if r.ok:
+            file_url = r.json().get("file_url")
+            if file_url:
+                with db_conn() as conn, conn.cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO papers (id, source_type, url, created_at)
+                        VALUES (%s, 'upload', %s, now())
+                        ON CONFLICT (id) DO UPDATE
+                        SET url = EXCLUDED.url, source_type = 'upload'
+                    """, (paper_id, file_url))
+            print(f"[UPLOAD] File salvato sulla VM → {file_url}")
+        else:
+            print(f"[UPLOAD] Fallito: {r.status_code} {r.text}")
+    except Exception as e:
+        print(f"[UPLOAD] Errore invio PDF alla VM: {e}")
+    
     # progress: job id
     job_id = (jobId or str(uuid.uuid4()))
     try: _emit(job_id, {"type": "parsing_start"})
@@ -466,7 +515,7 @@ async def explain_endpoint(
 
     # 1) Salva PDF temporaneo
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-        tmp.write(await file.read())
+        tmp.write(pdf_bytes) 
         pdf_path = tmp.name
 
     # 2) Docparse → markdown
@@ -555,6 +604,8 @@ async def explain_endpoint(
         "docTitle": data.get("paper_title") or file.filename,
         "sections": _normalize_sections(sections),
         "meta": {
+            "paperId": paper_id,
+            "paperUrl": file_url,
             "paperText": text,
             "lengthPreset": st_preset,
             "creativity": int(float(temp) * 100),
@@ -677,6 +728,112 @@ class RegenVmRequest(BaseModel):
     max_ctx_chars: Optional[int] = None
     seg_words: Optional[int] = None
     overlap_words: Optional[int] = None
+
+@app.post("/api/papers/intake", tags=["Explain"])
+async def intake_paper(
+    file: UploadFile | None = File(None),
+    link: str | None = Form(None)
+):
+    """
+    Intake di un paper: salva PDF o registra link remoto.
+    Scrive SEMPRE su DB nella tabella 'papers'.
+    Ritorna { paper_id, dedup, paper_url }.
+    """
+    paper_id = str(uuid.uuid4())
+    dedup = False
+    paper_url = None
+
+    # ====== Caso A: UPLOAD PDF ======
+    if file is not None:
+        file_resp = {}
+        file_path = None
+        sha256 = None
+
+        # 1) invia alla VM (se configurata) per persistenza file
+        try:
+            payload_bytes = await file.read()
+            files = {"file": (file.filename, payload_bytes, "application/pdf")}
+            data_upload = {"paper_id": paper_id}
+            r = requests.post(
+                f"{REMOTE_GPU_URL}/papers/upload",
+                files=files, data=data_upload, timeout=60
+            )
+            if r.ok:
+                file_resp = r.json() or {}
+                paper_url = file_resp.get("file_url")     # URL pubblico (se esposto)
+                file_path = file_resp.get("file_path")    # path su VM (se restituito)
+                sha256    = file_resp.get("sha256")       # hash (se calcolato su VM)
+            else:
+                print(f"[INTAKE] Upload su VM fallito: {r.status_code} {r.text}")
+        except Exception as e:
+            print(f"[INTAKE] Errore upload PDF: {e}")
+
+        # 2) persistenza su DB con dedup per sha256 (se disponibile)
+        with db_conn() as conn, conn.cursor() as cur:
+            if sha256:
+                # prova insert con sha256; se già esiste, non inserire
+                cur.execute("""
+                    INSERT INTO papers (id, source_type, url, file_path, sha256, created_at)
+                    VALUES (%s, 'upload', %s, %s, %s, now())
+                    ON CONFLICT ON CONSTRAINT papers_sha256_uq DO NOTHING
+                """, (paper_id, paper_url, file_path, sha256))
+
+                # recupera l'id effettivo per quell’hash
+                cur.execute("SELECT id FROM papers WHERE sha256 = %s", (sha256,))
+                row = cur.fetchone()
+                if row:
+                    existing_id = row[0]
+                    if existing_id != paper_id:
+                        dedup = True
+                        paper_id = existing_id
+
+                # in ogni caso, assicurati che url/file_path siano aggiornati
+                cur.execute("""
+                    UPDATE papers
+                    SET url = COALESCE(%s, url),
+                        file_path = COALESCE(%s, file_path),
+                        source_type = 'upload'
+                    WHERE id = %s
+                """, (paper_url, file_path, paper_id))
+            else:
+                # niente sha256 → assicurati che la riga esista e abbia url/file_path
+                cur.execute("""
+                    INSERT INTO papers (id, source_type, url, file_path, created_at)
+                    VALUES (%s, 'upload', %s, %s, now())
+                    ON CONFLICT (id) DO UPDATE
+                    SET url = EXCLUDED.url,
+                        file_path = EXCLUDED.file_path,
+                        source_type = 'upload'
+                """, (paper_id, paper_url, file_path))
+
+        return {"paper_id": paper_id, "dedup": dedup, "paper_url": paper_url}
+
+    # ====== Caso B: LINK remoto ======
+    if link:
+        norm = _norm_url(link)
+        paper_url = norm
+        with db_conn() as conn, conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO papers (id, source_type, url, created_at)
+                VALUES (%s, 'link', %s, now())
+                ON CONFLICT DO NOTHING
+            """, (paper_id, norm))
+
+            cur.execute("SELECT id, source_type FROM papers WHERE lower(url) = lower(%s)", (norm,))
+            row = cur.fetchone()
+            if row:
+                existing_id, st = row
+                dedup = (existing_id != paper_id)
+                paper_id = existing_id
+                if st != 'link':
+                    cur.execute("UPDATE papers SET source_type='link' WHERE id=%s", (paper_id,))
+            else:
+                print("[INTAKE] WARNING: insert link non visibile in SELECT, controlla vincoli")
+
+        print(f"[INTAKE] Link registrato in DB → {norm} (dedup={dedup}, id={paper_id})")
+        return {"paper_id": paper_id, "dedup": dedup, "paper_url": paper_url}
+
+    raise HTTPException(400, "Serve un file o un link")
 
 @app.post(
     "/api/regen_vm",
@@ -917,3 +1074,18 @@ def regen_paragraph_vm(req: RegenParagraphVmReq):
             }
         }
     }
+
+@app.post("/api/locate_section")
+def locate_section_stub():
+    return {"best": {"page": 1, "bbox": [0.10, 0.18, 0.90, 0.30]}, "alternatives": [], "meta": {"score": 0.99}}
+
+from fastapi.responses import RedirectResponse
+
+@app.get("/api/papers/{paper_id}/pdf")
+def get_paper_pdf(paper_id: str):
+    with db_conn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT url FROM papers WHERE id=%s", (paper_id,))
+        row = cur.fetchone()
+    if not row or not row[0]:
+        raise HTTPException(404, "PDF URL not found for this paper")
+    return RedirectResponse(row[0])

@@ -1,5 +1,6 @@
 // FILE: AIScientistStoryteller/src/pages/Stories.jsx
 import { useEffect, useMemo, useState, useRef, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import Sidebar from "../components/Sidebar.jsx";
 import StoryView from "../components/StoryView.jsx";
 import ControlPanel from "../components/ControlPanel.jsx";
@@ -13,6 +14,7 @@ import {
   getParagraphVariantsHistory, chooseParagraphVariant,
 } from "../services/storiesApi.js";
 import Loading from "../components/Loading.jsx";
+export const API_BASE = import.meta.env.VITE_API_BASE || "/svc";
 
 /* ───────────────── helpers comuni ───────────────── */
 function deriveAggregatesFromSections(sections = [], base = {}) {
@@ -152,6 +154,7 @@ function lastBatchObjectsForSelection(story, variantHistory, selectedParagraph) 
 /* ───────────────── component ───────────────── */
 
 export default function Stories(){
+  const navigate = useNavigate();
   /* ---------- STATE & REFS (dichiarati prima dell’uso) ---------- */
   const [stories, setStories] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
@@ -906,6 +909,68 @@ async function refreshVariantsForSelection(story, sectionId, paragraphIndex, for
     if (!openCP) setOpenCP(true);
   }
 
+  // ---- Locate on paper (calls backend) ----
+async function locateSectionOnPaper({ story, sectionId, W = 3, topk = 8 }) {
+  if (!story?.meta?.paperId) throw new Error("Missing meta.paperId");
+  const secs = Array.isArray(story?.sections) ? story.sections : [];
+  const idx = secs.findIndex((s, i) => String(s?.id ?? s?.sectionId ?? i) === String(sectionId));
+  if (idx < 0) throw new Error("Invalid sectionId");
+  const s = secs[idx] || {};
+
+  // testo più robusto: paragraphs -> text -> narrative
+  const sectionText =
+    (Array.isArray(s.paragraphs) && s.paragraphs.join("\n\n")) ||
+    (typeof s.text === "string" ? s.text : "") ||
+    (typeof s.narrative === "string" ? s.narrative : "");
+
+  const sectionTitle = typeof s.title === "string" ? s.title : "";
+
+  // chiama il backend (niente storiesApi: fetch diretto qui)
+  const res = await fetch(`${API_BASE}/api/locate_section`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      paperId: story.meta.paperId,
+      section_text: sectionText,
+      section_title: sectionTitle,
+      W,
+      topk,
+    }),
+  });
+
+  if (!res.ok) {
+    const txt = await res.text().catch(() => "");
+    throw new Error(`locate_section failed (${res.status}): ${txt || "unknown error"}`);
+  }
+  const data = await res.json();
+
+  // normalizza in highlights che il PdfViewer già capisce: [{ page, rects: [[x1,y1,x2,y2], ...] }]
+  if (!data?.best?.page || !Array.isArray(data?.best?.bbox)) {
+    // fallback minimale
+    return {
+      initialPage: 1,
+      highlights: [{ page: 1, rects: [[0.10, 0.18, 0.90, 0.30]] }],
+      alternatives: [],
+    };
+  }
+
+  const bestPage = Number(data.best.page) || 1;
+  const bestRect = Array.isArray(data.best.bbox) ? data.best.bbox.slice(0, 4) : [0.10, 0.18, 0.90, 0.30];
+
+  const alternatives = Array.isArray(data.alternatives)
+    ? data.alternatives
+        .filter(a => a?.page && Array.isArray(a?.bbox))
+        .map(a => ({ page: Number(a.page), rects: [a.bbox.slice(0, 4)] }))
+    : [];
+
+  return {
+    initialPage: bestPage,
+    highlights: [{ page: bestPage, rects: [bestRect] }],
+    alternatives,
+    meta: data?.meta || {},
+  };
+}
+
   /* ---------- PDF helpers ---------- */
   function randomHighlight() {
     const w = 0.70 + Math.random() * 0.10;
@@ -915,17 +980,67 @@ async function refreshVariantsForSelection(story, sectionId, paragraphIndex, for
     return [{ x, y, w, h }];
   }
 
-  const handleReadOnPaper = () => {
-    const url = selectedStory?.meta?.pdfUrl;
-    setPdfError(null);
-    const sameOrigin = url && (url.startsWith("/") || new URL(url, window.location.origin).origin === window.location.origin);
-    if (!sameOrigin) {
-      alert("This PDF is from an external domain. For inline preview, place the file in /public (e.g., /papers/demo.pdf) or use a server-side proxy.");
-      return;
+  const handleReadOnPaper = async ({ sectionId } = {}) => {
+    const url =
+      selectedStory?.meta?.paperUrl ||
+      selectedStory?.meta?.pdfUrl ||
+      (selectedStory?.meta?.paperId ? `${API_BASE}/api/papers/${selectedStory.meta.paperId}/pdf` : null);
+
+    if (!url) { alert("No PDF set for this story (meta.paperUrl)."); return; }
+  
+    try {
+      // chiama il backend per trovare la pagina/box migliore
+      const located = await locateSectionOnPaper({ story: selectedStory, sectionId, W: 3, topk: 8 });
+  
+      // se hai una double-side view dedicata via /reader, passa tutto allo state
+      navigate("/reader", {
+        state: {
+          storyId: selectedStory?.id,
+          sectionId,
+          pdfUrl: url,
+          initialPage: located.initialPage,
+          highlights: located.highlights,          // [{ page, rects: [[x1,y1,x2,y2]] }]
+          altHighlights: located.alternatives || [],// opzionale: alternative match
+          locateMeta: located.meta || {},
+        }
+      });
+  
+      // Se invece vuoi aprire inline il PdfViewer in questa pagina, decommenta:
+      // setShowPdf(true);
+      // setPdfError(null);
+      // setPdfHighlights(located.highlights);
+  
+    } catch (e) {
+      console.error(e);
+      // fallback: heuristics già presenti
+      const secs = Array.isArray(selectedStory?.sections) ? selectedStory.sections : [];
+      const idx = secs.findIndex((s, i) => String(s?.id ?? s?.sectionId ?? i) === String(sectionId));
+      const sectionIndex = idx >= 0 ? idx : 0;
+  
+      const pageFromMeta =
+        selectedStory?.meta?.anchorsBySectionId?.[sectionId]?.page ??
+        secs?.[sectionIndex]?.page ??
+        selectedStory?.meta?.docparse?.sections?.[sectionIndex]?.page ??
+        selectedStory?.meta?.docparse?.pages_map?.[secs?.[sectionIndex]?.title || ""] ??
+        1;
+  
+      const initialPage = Math.max(1, parseInt(pageFromMeta, 10) || 1);
+      const fallbackHeaderRect = [[0.10, 0.18, 0.90, 0.12]];
+  
+      navigate("/reader", {
+        state: {
+          storyId: selectedStory?.id,
+          sectionId,
+          pdfUrl: url,
+          initialPage,
+          highlights: [{ page: initialPage, rects: fallbackHeaderRect }],
+          altHighlights: [],
+          locateMeta: { reason: "fallback" },
+        }
+      });
     }
-    setPdfHighlights(randomHighlight());
-    setShowPdf(true);
   };
+  
 
   const handleContinueNotes  = () => { setCpStage("notes"); };
   const handleContinueGlobal = () => { setSelectedParagraph(null); setSelectedSectionId(null); setCpStage("notes"); };
@@ -978,7 +1093,7 @@ async function refreshVariantsForSelection(story, sectionId, paragraphIndex, for
   /* ---------- RENDER ---------- */
   const SIDEBAR_W = 300;
   const PANEL_W   = 380;
-  const pdfUrl = selectedStory?.meta?.pdfUrl || null;
+  const pdfUrl = selectedStory?.meta?.paperUrl || selectedStory?.meta?.pdfUrl || null;
   const showLoadingPage = loading || isRegenerating;
 
   if (showLoadingPage) {
@@ -1060,11 +1175,11 @@ async function refreshVariantsForSelection(story, sectionId, paragraphIndex, for
             {showPdf && pdfUrl ? (
               <PdfViewer
                 url={pdfUrl}
-                page={1}
+                page={pdfHighlights?.[0]?.page ?? 1}
                 scale={1.35}
                 highlights={pdfHighlights}
                 onError={() => { setPdfError(true); setShowPdf(false); }}
-              />
+              />            
             ) : (
               <StoryView
                 story={selectedStory}
@@ -1117,6 +1232,7 @@ async function refreshVariantsForSelection(story, sectionId, paragraphIndex, for
                 appliedOverrides={appliedOverrides}
                 onApplyInlineVariant={handleApplyInlineVariant}
                 variantCounts={variantCounts}
+                onReadOnPaper={handleReadOnPaper}
               />
             )}
           </div>

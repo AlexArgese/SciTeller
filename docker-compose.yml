@@ -28,8 +28,12 @@ services:
       TRANSFORMERS_CACHE: /hf-cache/transformers
       HF_HUB_OFFLINE: "1"      
       TRANSFORMERS_OFFLINE: "1"
+
+      PAPERS_DIR: /data/papers
+      DATABASE_URL: ${DATABASE_URL}
     volumes:
-      - ./hf-cache:/hf-cache    
+      - ./hf-cache:/hf-cache  
+      - ./data/papers:/data/papers
     expose:
       - "8000"
     ports:
@@ -68,6 +72,7 @@ services:
 
       REMOTE_GPU_URL: ${REMOTE_GPU_URL:-http://host.docker.internal:8000}
       REMOTE_API_KEY: ${REMOTE_API_KEY}
+      
     extra_hosts:
       - "host.docker.internal:host-gateway"
     expose:
