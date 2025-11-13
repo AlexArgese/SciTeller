@@ -161,6 +161,9 @@ DOCPARSE_BIN = os.environ.get("DOCPARSE_BIN",
     "/Users/alex/Desktop/UNI/EURECOM/Internship/dataset/model/old_dataset/Document_Parsing/.venv/bin/docparse")
 
 REMOTE_GPU_URL = os.environ.get("REMOTE_GPU_URL", "").rstrip("/")
+if REMOTE_GPU_URL.endswith("/api"):
+    REMOTE_GPU_URL = REMOTE_GPU_URL[:-4]
+print(f"[CFG] REMOTE_GPU_URL base = {REMOTE_GPU_URL}")
 REMOTE_API_KEY = os.environ.get("REMOTE_API_KEY", "")
 
 # Local fallback (CPU) — lasciamo invariati per /api/regen, /api/para
@@ -377,6 +380,28 @@ def _norm_url(u: str) -> str:
 
 
 # ========= Helpers =========
+def _vm_upload_pdf(paper_id: str, filename: str, pdf_bytes: bytes) -> str | None:
+    # Prova prima con /api/papers/upload, poi fallback a /papers/upload
+    for path in ("/api/papers/upload", "/papers/upload"):
+        try:
+            r = requests.post(
+                f"{REMOTE_GPU_URL}{path}",
+                files={"file": (filename, pdf_bytes, "application/pdf")},
+                data={"paper_id": paper_id},
+                timeout=60,
+            )
+            if r.ok:
+                resp = r.json() or {}
+                file_url = resp.get("file_url")
+                print(f"[UPLOAD] OK via {path} → {file_url}")
+                return file_url
+            else:
+                print(f"[UPLOAD] {path} → {r.status_code} {r.text}")
+                # se è 404 continuo con il prossimo path
+        except Exception as e:
+            print(f"[UPLOAD] errore {path}: {e}")
+    return None
+
 def _headers():
     h = {"Content-Type": "application/json"}
     if REMOTE_API_KEY:
@@ -486,27 +511,19 @@ async def explain_endpoint(
     # --- [A] Salva PDF remoto su VM per la visualizzazione successiva ---
     pdf_bytes = await file.read()
     paper_id = str(uuid.uuid4())
-    file_url = None
+    file_url = _vm_upload_pdf(paper_id, file.filename, pdf_bytes)
+    view_url = f"/api/papers/{paper_id}/pdf"
 
-    try:
-        files = {"file": (file.filename, pdf_bytes, "application/pdf")}
-        data_upload = {"paper_id": paper_id}
-        r = requests.post(f"{REMOTE_GPU_URL}/papers/upload", files=files, data=data_upload, timeout=60)
-        if r.ok:
-            file_url = r.json().get("file_url")
-            if file_url:
-                with db_conn() as conn, conn.cursor() as cur:
-                    cur.execute("""
-                        INSERT INTO papers (id, source_type, url, created_at)
-                        VALUES (%s, 'upload', %s, now())
-                        ON CONFLICT (id) DO UPDATE
-                        SET url = EXCLUDED.url, source_type = 'upload'
-                    """, (paper_id, file_url))
-            print(f"[UPLOAD] File salvato sulla VM → {file_url}")
-        else:
-            print(f"[UPLOAD] Fallito: {r.status_code} {r.text}")
-    except Exception as e:
-        print(f"[UPLOAD] Errore invio PDF alla VM: {e}")
+    if file_url:
+        with db_conn() as conn, conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO papers (id, source_type, url, created_at)
+                VALUES (%s, 'upload', %s, now())
+                ON CONFLICT (id) DO UPDATE
+                SET url = EXCLUDED.url, source_type='upload'
+            """, (paper_id, file_url))
+    else:
+        print("[UPLOAD] nessun file_url (upload fallito)")
     
     # progress: job id
     job_id = (jobId or str(uuid.uuid4()))
@@ -605,7 +622,7 @@ async def explain_endpoint(
         "sections": _normalize_sections(sections),
         "meta": {
             "paperId": paper_id,
-            "paperUrl": file_url,
+            "paperUrl": view_url,
             "paperText": text,
             "lengthPreset": st_preset,
             "creativity": int(float(temp) * 100),
@@ -745,68 +762,18 @@ async def intake_paper(
 
     # ====== Caso A: UPLOAD PDF ======
     if file is not None:
-        file_resp = {}
-        file_path = None
-        sha256 = None
+        pdf_bytes = await file.read()
+        file_url = _vm_upload_pdf(paper_id, file.filename, pdf_bytes)
 
-        # 1) invia alla VM (se configurata) per persistenza file
-        try:
-            payload_bytes = await file.read()
-            files = {"file": (file.filename, payload_bytes, "application/pdf")}
-            data_upload = {"paper_id": paper_id}
-            r = requests.post(
-                f"{REMOTE_GPU_URL}/papers/upload",
-                files=files, data=data_upload, timeout=60
-            )
-            if r.ok:
-                file_resp = r.json() or {}
-                paper_url = file_resp.get("file_url")     # URL pubblico (se esposto)
-                file_path = file_resp.get("file_path")    # path su VM (se restituito)
-                sha256    = file_resp.get("sha256")       # hash (se calcolato su VM)
-            else:
-                print(f"[INTAKE] Upload su VM fallito: {r.status_code} {r.text}")
-        except Exception as e:
-            print(f"[INTAKE] Errore upload PDF: {e}")
-
-        # 2) persistenza su DB con dedup per sha256 (se disponibile)
         with db_conn() as conn, conn.cursor() as cur:
-            if sha256:
-                # prova insert con sha256; se già esiste, non inserire
-                cur.execute("""
-                    INSERT INTO papers (id, source_type, url, file_path, sha256, created_at)
-                    VALUES (%s, 'upload', %s, %s, %s, now())
-                    ON CONFLICT ON CONSTRAINT papers_sha256_uq DO NOTHING
-                """, (paper_id, paper_url, file_path, sha256))
+            cur.execute("""
+                INSERT INTO papers (id, source_type, url, created_at)
+                VALUES (%s, 'upload', %s, now())
+                ON CONFLICT (id) DO UPDATE
+                SET url = EXCLUDED.url, source_type='upload'
+            """, (paper_id, file_url))
 
-                # recupera l'id effettivo per quell’hash
-                cur.execute("SELECT id FROM papers WHERE sha256 = %s", (sha256,))
-                row = cur.fetchone()
-                if row:
-                    existing_id = row[0]
-                    if existing_id != paper_id:
-                        dedup = True
-                        paper_id = existing_id
-
-                # in ogni caso, assicurati che url/file_path siano aggiornati
-                cur.execute("""
-                    UPDATE papers
-                    SET url = COALESCE(%s, url),
-                        file_path = COALESCE(%s, file_path),
-                        source_type = 'upload'
-                    WHERE id = %s
-                """, (paper_url, file_path, paper_id))
-            else:
-                # niente sha256 → assicurati che la riga esista e abbia url/file_path
-                cur.execute("""
-                    INSERT INTO papers (id, source_type, url, file_path, created_at)
-                    VALUES (%s, 'upload', %s, %s, now())
-                    ON CONFLICT (id) DO UPDATE
-                    SET url = EXCLUDED.url,
-                        file_path = EXCLUDED.file_path,
-                        source_type = 'upload'
-                """, (paper_id, paper_url, file_path))
-
-        return {"paper_id": paper_id, "dedup": dedup, "paper_url": paper_url}
+        return {"paper_id": paper_id, "dedup": False, "paper_url": file_url}
 
     # ====== Caso B: LINK remoto ======
     if link:
@@ -1079,7 +1046,8 @@ def regen_paragraph_vm(req: RegenParagraphVmReq):
 def locate_section_stub():
     return {"best": {"page": 1, "bbox": [0.10, 0.18, 0.90, 0.30]}, "alternatives": [], "meta": {"score": 0.99}}
 
-from fastapi.responses import RedirectResponse
+import requests
+from fastapi.responses import StreamingResponse
 
 @app.get("/api/papers/{paper_id}/pdf")
 def get_paper_pdf(paper_id: str):
@@ -1088,4 +1056,18 @@ def get_paper_pdf(paper_id: str):
         row = cur.fetchone()
     if not row or not row[0]:
         raise HTTPException(404, "PDF URL not found for this paper")
-    return RedirectResponse(row[0])
+
+    file_url = row[0]
+    # Se relativo, costruisci URL interno verso la VM (usabile dal backend)
+    if file_url.startswith("/"):
+        file_url = f"{REMOTE_GPU_URL.rstrip('/')}{file_url}"
+
+    try:
+        r = requests.get(file_url, stream=True, timeout=60)
+        if not r.ok:
+            raise HTTPException(r.status_code, f"Upstream PDF fetch failed: {r.text[:200]}")
+        return StreamingResponse(r.iter_content(chunk_size=65536),
+                                 media_type="application/pdf",
+                                 headers={"Content-Disposition": f'inline; filename="{paper_id}.pdf"'})
+    except requests.RequestException as e:
+        raise HTTPException(502, f"Upstream error: {e}")
