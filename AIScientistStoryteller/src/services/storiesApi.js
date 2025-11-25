@@ -219,31 +219,57 @@ export async function explainAndUpdateStory(storyId, args) {
 export async function generateTextAndUpdateStory(storyId, args) {
   const adapted = await generateFromText(args);  // {title, persona, sections, meta?}
 
-  // salva anche i parametri scelti dall’utente dentro meta.upstreamParams
-  const patch = {
-    title: adapted.title || adapted.docTitle || "Story",
-    persona: args.persona || adapted.persona || "General Public",
-    sections: Array.isArray(adapted.sections) ? adapted.sections : [],
-    meta: {
-      ...(adapted.meta || {}),
-      upstreamParams: {
-        // quello che l’utente ha scelto nel Control Panel
-        temp: Number(args.temp ?? 0),
-        top_p: Number(args.top_p ?? 0.9),
-        lengthPreset: String(args.length_preset || "medium"),
-        words: Number(args.words || 0) || undefined,
-        limit_sections: Number(args.limit_sections || 5),
-        persona: String(args.persona || "General Public"),
-        ...(args.retriever       !== undefined ? { retriever: args.retriever } : {}),
-        ...(args.retriever_model !== undefined ? { retriever_model: args.retriever_model } : {}),
-        ...(args.k               !== undefined ? { k: args.k } : {}),
-        ...(args.max_ctx_chars   !== undefined ? { max_ctx_chars: args.max_ctx_chars } : {}),
-        ...(args.seg_words       !== undefined ? { seg_words: args.seg_words } : {}),
-        ...(args.overlap_words   !== undefined ? { overlap_words: args.overlap_words } : {}),
-      },
-      aiTitle: adapted.title || null,
-      docTitle: adapted.docTitle || null,
+  // 1) carico la story corrente per NON perdere meta (paperText, paperId, paperUrl, anchors, ecc.)
+  let current = null;
+  try {
+    const res = await fetch(`/api/stories/${encodeURIComponent(storyId)}`, {
+      method: "GET",
+      credentials: "include",
+      cache: "no-store",
+    });
+    current = res.ok ? await res.json() : null;
+  } catch {}
+
+  const prevMeta    = current?.meta || {};
+  const adaptedMeta = adapted?.meta || {};
+
+  // 2) MERGE meta vecchio + meta nuovo
+  const mergedMeta = {
+    ...prevMeta,
+    ...adaptedMeta,
+
+    // se sto rigenerando da un testo sorgente, me lo porto dietro in meta.paperText
+    ...(args.text ? { paperText: args.text } : {}),
+
+    // se generate_from_text NON manda paperId/paperUrl, tengo quelli di prima
+    ...(adaptedMeta.paperId  ? {} : (prevMeta.paperId  ? { paperId:  prevMeta.paperId }  : {})),
+    ...(adaptedMeta.paperUrl ? {} : (prevMeta.paperUrl ? { paperUrl: prevMeta.paperUrl } : {})),
+
+    upstreamParams: {
+      ...((prevMeta && prevMeta.upstreamParams) || {}),
+      temp: Number(args.temp ?? 0),
+      top_p: Number(args.top_p ?? 0.9),
+      lengthPreset: String(args.length_preset || "medium"),
+      words: Number(args.words || 0) || undefined,
+      limit_sections: Number(args.limit_sections || 5),
+      persona: String(args.persona || "General Public"),
+      ...(args.retriever       !== undefined ? { retriever: args.retriever } : {}),
+      ...(args.retriever_model !== undefined ? { retriever_model: args.retriever_model } : {}),
+      ...(args.k               !== undefined ? { k: args.k } : {}),
+      ...(args.max_ctx_chars   !== undefined ? { max_ctx_chars: args.max_ctx_chars } : {}),
+      ...(args.seg_words       !== undefined ? { seg_words: args.seg_words } : {}),
+      ...(args.overlap_words   !== undefined ? { overlap_words: args.overlap_words } : {}),
     },
+
+    aiTitle: adapted.title || prevMeta.aiTitle || null,
+    docTitle: adapted.docTitle || adaptedMeta.docTitle || prevMeta.docTitle || null,
+  };
+
+  const patch = {
+    title: adapted.title || adapted.docTitle || current?.title || "Story",
+    persona: args.persona || adapted.persona || current?.persona || "General Public",
+    sections: Array.isArray(adapted.sections) ? adapted.sections : [],
+    meta: mergedMeta,
     ...(args.baseRevisionId ? { baseRevisionId: args.baseRevisionId } : null),
   };
 

@@ -5,16 +5,14 @@
 
 /* Grid principale (2 colonne) */
 .page {
-  display: grid;
-  grid-template-columns: minmax(420px, 1fr) minmax(420px, 1fr);
+  display: flex;
+  flex-direction: row;
   gap: var(--sp-10);
   width: min(1600px, 96vw);
-  margin: calc(var(--nav-h) + 30px) auto;
+  margin: 12vh auto 50vh auto;
   padding-inline: var(--sp-3);
   align-items: center;
 
-  /* unico punto verità per sticky offset */
-  --sticky-top: calc(var(--nav-h) + var(--sp-2));
 }
 
 /* wrapper colonna sinistra (PDF) */
@@ -22,6 +20,7 @@
   position: sticky;
   top: var(--sp-3);
   align-self: start;
+  width: 70%;
 }
 
 /* card PDF (coerente con altre card/glass) */
@@ -31,6 +30,7 @@
   border-radius: var(--r-lg);
   box-shadow: var(--shadow-1);
   padding: var(--sp-2);
+  margin-bottom: calc(var(--footer-h) + 50px);
 }
 
 /* header della card PDF (Back + etichetta PDF) */
@@ -77,7 +77,13 @@
 }
 
 /* colonna destra (Story) */
-.right {}
+.right {
+  position: sticky;
+  top: var(--sp-3);
+  align-self: start;
+  width: 30%;
+  margin-bottom: calc(var(--footer-h) + 30px);
+}
 
 /* card storia (coerente con card/glass) */
 .storyCard {
@@ -149,7 +155,6 @@
     gap: var(--sp-3);
   }
   .left {
-    position: relative;
     top: 0;
   }
   .viewerCard {

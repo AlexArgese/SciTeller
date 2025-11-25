@@ -13,9 +13,10 @@ import {
   // ⬇️ API varianti
   getParagraphVariantsHistory, chooseParagraphVariant,
 } from "../services/storiesApi.js";
+import { getCachedPaperText } from "../services/explainApi.js";
 import Loading from "../components/Loading.jsx";
 export const API_BASE = import.meta.env.VITE_API_BASE || "/svc";
-
+const DEBUG_LOCATE = true;
 /* ───────────────── helpers comuni ───────────────── */
 function deriveAggregatesFromSections(sections = [], base = {}) {
   const baseLen = base.lengthPreset || "medium";
@@ -171,6 +172,7 @@ export default function Stories(){
 
   const [busySectionIds, setBusySectionIds] = useState([]);
   const [isRegenerating, setIsRegenerating] = useState(false);
+  const [isLocating, setIsLocating] = useState(false);
 
   const [inlineVariantIndexByKey, setInlineVariantIndexByKey] = useState({}); // { "s1:0": 2, ... }
   const [appliedOverrides, setAppliedOverrides] = useState({}); // { "secId:idx": "testo scelto" }
@@ -227,6 +229,15 @@ export default function Stories(){
       "Drafting the first section…",
       "Adapting tone to persona…",
       "Refining transitions…",
+    ],
+    []
+  );
+  const locatingMsgs = useMemo(
+    () => [
+      "Finding the most relevant parts of the paper…",
+      "Matching the story with the paper content…",
+      "Locating corresponding text in the PDF…",
+      "Almost there!"
     ],
     []
   );
@@ -924,8 +935,28 @@ async function locateSectionOnPaper({ story, sectionId, W = 3, topk = 8 }) {
     (typeof s.narrative === "string" ? s.narrative : "");
 
   const sectionTitle = typeof s.title === "string" ? s.title : "";
+  // ✅ usa il testo “commentato” con bboxes se presente
+  const directPaperText =
+  (typeof story?.meta?.paperText === "string" && story.meta.paperText.trim())
+    ? story.meta.paperText
+    : null;
 
-  // chiama il backend (niente storiesApi: fetch diretto qui)
+  const cachedPaperText =
+    !directPaperText && story?.meta?.paperId
+      ? getCachedPaperText(story.meta.paperId)
+      : null;
+
+  const paperText = directPaperText || cachedPaperText;
+
+  console.log("[locateSectionOnPaper] has paperText?", !!paperText);
+
+
+  console.log("[locateSectionOnPaper] storyId:", story.id);
+  console.log("[locateSectionOnPaper] has paperText?", !!story?.meta?.paperText);
+  if (story?.meta?.paperText) {
+    console.log("[locateSectionOnPaper] paperText length:", story.meta.paperText.length);
+  }
+      
   const res = await fetch(`${API_BASE}/api/locate_section`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -935,8 +966,10 @@ async function locateSectionOnPaper({ story, sectionId, W = 3, topk = 8 }) {
       section_title: sectionTitle,
       W,
       topk,
+      ...(paperText ? { paperText } : {}),   // 👈 qui
     }),
   });
+
 
   if (!res.ok) {
     const txt = await res.text().catch(() => "");
@@ -944,8 +977,26 @@ async function locateSectionOnPaper({ story, sectionId, W = 3, topk = 8 }) {
   }
   const data = await res.json();
 
+  function clamp01(v){ return Math.max(0, Math.min(1, v)); }
+  function normBox(b){
+    // b = [x1,y1,x2,y2] già normalizzati 0..1; clamp per sicurezza
+    const [x1,y1,x2,y2] = b;
+    return [clamp01(x1), clamp01(y1), clamp01(x2), clamp01(y2)];
+  }
+  // Se il tuo PdfViewer usa origine Y dal BASSO, abilita flipY:
+  const flipY = true; 
+  function maybeFlipY([x1,y1,x2,y2]){
+    return flipY ? [x1, 1 - y2, x2, 1 - y1] : [x1,y1,x2,y2];
+  }
+
+  function toRectArray([x1,y1,x2,y2]) {
+      const c = (v)=>Math.max(0,Math.min(1,Number(v)||0));
+      return [c(x1),c(y1),c(x2),c(y2)];
+    }
+   
+
   // normalizza in highlights che il PdfViewer già capisce: [{ page, rects: [[x1,y1,x2,y2], ...] }]
-  if (!data?.best?.page || !Array.isArray(data?.best?.bbox)) {
+  if (typeof data?.best?.page !== "number" || !Array.isArray(data?.best?.bbox)) {
     // fallback minimale
     return {
       initialPage: 1,
@@ -954,69 +1005,111 @@ async function locateSectionOnPaper({ story, sectionId, W = 3, topk = 8 }) {
     };
   }
 
-  const bestPage = Number(data.best.page) || 1;
-  const bestRect = Array.isArray(data.best.bbox) ? data.best.bbox.slice(0, 4) : [0.10, 0.18, 0.90, 0.30];
+  function asPageNumber(p){ 
+    const n = Number(p);
+    return Number.isFinite(n) && n >= 1 ? n : 1;  // tratti tutto come 1-based
+  }
 
-  const alternatives = Array.isArray(data.alternatives)
+  const bestPage = asPageNumber(data.best.page);
+  let bestRect = maybeFlipY(
+    normBox(
+      Array.isArray(data.best.bbox)
+        ? data.best.bbox.slice(0, 4)
+        : [0.10, 0.18, 0.90, 0.30]
+    )
+  );
+
+  // ⬇️ score del best
+  const bestScore =
+    typeof data?.best?.score === "number" ? data.best.score : null;
+
+    const alternatives = Array.isArray(data.alternatives)
     ? data.alternatives
-        .filter(a => a?.page && Array.isArray(a?.bbox))
-        .map(a => ({ page: Number(a.page), rects: [a.bbox.slice(0, 4)] }))
+        .filter(a => typeof a?.page === "number" && Array.isArray(a?.bbox))
+        .map(a => ({
+          page: asPageNumber(a.page),
+          rects: [
+            toRectArray(maybeFlipY(normBox(a.bbox.slice(0, 4))))
+          ]
+        }))
     : [];
+
+  if (DEBUG_LOCATE) {
+    console.groupCollapsed("[Stories] locateSectionOnPaper → normalized result");
+    console.log("bestPage:", bestPage);
+    console.log("bestRect [x1,y1,x2,y2]:", bestRect);
+    console.log("bestScore:", bestScore);
+    console.log("alternatives:", alternatives);
+    console.groupEnd();
+  }
 
   return {
     initialPage: bestPage,
-    highlights: [{ page: bestPage, rects: [bestRect] }],
+    highlights: [{
+      page: bestPage,
+      rects: [bestRect],
+      score: bestScore,
+    }],
     alternatives,
-    meta: data?.meta || {},
-  };
-}
+    meta: {
+      ...(data?.meta || {}),
+      bestScore: bestScore,
+    },
+  }
+};
 
   /* ---------- PDF helpers ---------- */
-  function randomHighlight() {
-    const w = 0.70 + Math.random() * 0.10;
-    const h = 0.045 + Math.random() * 0.015;
-    const x = 0.10 + Math.random() * 0.06;
-    const y = 0.20 + Math.random() * (0.75 - h);
-    return [{ x, y, w, h }];
-  }
 
   const handleReadOnPaper = async ({ sectionId } = {}) => {
     const url =
       selectedStory?.meta?.paperUrl ||
       selectedStory?.meta?.pdfUrl ||
       (selectedStory?.meta?.paperId ? `${API_BASE}/api/papers/${selectedStory.meta.paperId}/pdf` : null);
-
+    
+    console.log("selectedStory.meta", selectedStory.meta);
+  
     if (!url) { alert("No PDF set for this story (meta.paperUrl)."); return; }
   
-    try {
-      // chiama il backend per trovare la pagina/box migliore
-      const located = await locateSectionOnPaper({ story: selectedStory, sectionId, W: 3, topk: 8 });
+    // ⬇️ calcolo una volta l’indice per questa sezione
+    const secs = Array.isArray(selectedStory?.sections) ? selectedStory.sections : [];
+    const idx = secs.findIndex((s, i) => String(s?.id ?? s?.sectionId ?? i) === String(sectionId));
+    const sectionIndex = idx >= 0 ? idx : 0;
   
-      // se hai una double-side view dedicata via /reader, passa tutto allo state
+    try {
+      // mostra loader locale (nessuna route nuova)
+      setIsLocating(true);
+  
+      let didNavigate = false;
+      const located = await locateSectionOnPaper({ story: selectedStory, sectionId, W: 3, topk: 8 });
+      const hl = Array.isArray(located?.highlights) ? located.highlights : [];
+      const alts = Array.isArray(located?.alternatives) ? located.alternatives : [];
+      
+      if (true) {
+        console.groupCollapsed("[Stories] navigate → /reader");
+        console.log("pdfUrl:", url);
+        console.log("sectionIndex:", sectionIndex);
+        console.log("initialPage:", located.initialPage);
+        console.log("highlights (as sent):", JSON.stringify(hl));
+        console.log("altHighlights:", alts);
+        console.groupEnd();
+      }
+      
       navigate("/reader", {
         state: {
           storyId: selectedStory?.id,
           sectionId,
+          sectionIndex,
           pdfUrl: url,
           initialPage: located.initialPage,
-          highlights: located.highlights,          // [{ page, rects: [[x1,y1,x2,y2]] }]
-          altHighlights: located.alternatives || [],// opzionale: alternative match
+          highlights: hl,
+          altHighlights: alts,
           locateMeta: located.meta || {},
         }
       });
-  
-      // Se invece vuoi aprire inline il PdfViewer in questa pagina, decommenta:
-      // setShowPdf(true);
-      // setPdfError(null);
-      // setPdfHighlights(located.highlights);
-  
     } catch (e) {
       console.error(e);
-      // fallback: heuristics già presenti
-      const secs = Array.isArray(selectedStory?.sections) ? selectedStory.sections : [];
-      const idx = secs.findIndex((s, i) => String(s?.id ?? s?.sectionId ?? i) === String(sectionId));
-      const sectionIndex = idx >= 0 ? idx : 0;
   
+      // fallback: usa meta o default
       const pageFromMeta =
         selectedStory?.meta?.anchorsBySectionId?.[sectionId]?.page ??
         secs?.[sectionIndex]?.page ??
@@ -1025,12 +1118,13 @@ async function locateSectionOnPaper({ story, sectionId, W = 3, topk = 8 }) {
         1;
   
       const initialPage = Math.max(1, parseInt(pageFromMeta, 10) || 1);
-      const fallbackHeaderRect = [[0.10, 0.18, 0.90, 0.12]];
+      const fallbackHeaderRect = [{ x: 0.10, y: 0.18, w: 0.80, h: 0.12 }]; // [x1,y1,x2,y2]
   
       navigate("/reader", {
         state: {
           storyId: selectedStory?.id,
           sectionId,
+          sectionIndex,
           pdfUrl: url,
           initialPage,
           highlights: [{ page: initialPage, rects: fallbackHeaderRect }],
@@ -1038,9 +1132,13 @@ async function locateSectionOnPaper({ story, sectionId, W = 3, topk = 8 }) {
           locateMeta: { reason: "fallback" },
         }
       });
+    } finally {
+      // Chiudi il loader solo se sei rimasto su questa pagina
+      if (!navigate) {
+        setIsLocating(false);
+      }
     }
-  };
-  
+  };  
 
   const handleContinueNotes  = () => { setCpStage("notes"); };
   const handleContinueGlobal = () => { setSelectedParagraph(null); setSelectedSectionId(null); setCpStage("notes"); };
@@ -1095,6 +1193,18 @@ async function locateSectionOnPaper({ story, sectionId, W = 3, topk = 8 }) {
   const PANEL_W   = 380;
   const pdfUrl = selectedStory?.meta?.paperUrl || selectedStory?.meta?.pdfUrl || null;
   const showLoadingPage = loading || isRegenerating;
+
+  if (isLocating) {
+    return (
+      <Loading
+        title="AI Scientist Storyteller"
+        subtitle="Analyzing your section…"
+        phase="generic"
+        genericMsgs={locatingMsgs}  
+      />
+    );
+  }
+
 
   if (showLoadingPage) {
     return (

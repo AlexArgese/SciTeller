@@ -10,6 +10,20 @@ function adaptTwoStageResponse(data) {
     meta:     data?.meta || {},
   };
 }
+// Piccola cache in memoria: paperId -> paperText
+const paperTextCache = new Map();
+
+export function cachePaperText(paperId, text) {
+  if (!paperId || !text) return;
+  try {
+    paperTextCache.set(String(paperId), String(text));
+  } catch {}
+}
+
+export function getCachedPaperText(paperId) {
+  if (!paperId) return null;
+  return paperTextCache.get(String(paperId)) || null;
+}
 
 export async function explainPdf({ file, persona, options = {}, jobId = null }) {
   if (!file) throw new Error("Nessun PDF selezionato");
@@ -40,6 +54,8 @@ export async function explainPdf({ file, persona, options = {}, jobId = null }) 
 
   const text = await res.text().catch(() => "");
   let data; try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
+  console.debug("[explainPdf] raw data.meta:", data?.meta);
+  console.debug("[explainPdf] has paperText?", !!data?.meta?.paperText);
 
   if (!res.ok) {
     console.error("[explainPdf] HTTP error", res.status, data);
@@ -51,29 +67,52 @@ export async function explainPdf({ file, persona, options = {}, jobId = null }) 
 
 export async function explainPdfAndUpdate(storyId, { file, persona, options = {}, jobId = null }) {
   const adapted = await explainPdf({ file, persona, options, jobId });
-
   const aiTitle = (adapted?.title || "").trim();
 
+  if (adapted?.meta?.paperId && adapted?.meta?.paperText) {
+    cachePaperText(adapted.meta.paperId, adapted.meta.paperText);
+  }
+
+
+  // 1) prendo la story corrente (se esiste) solo per MERGIARE meta extra
   let current = null;
   try {
     const r = await fetch(`/api/stories/${encodeURIComponent(storyId)}`, {
-      method: "GET", credentials: "include", cache: "no-store",
+      method: "GET",
+      credentials: "include",
+      cache: "no-store",
     });
     current = r.ok ? await r.json() : null;
   } catch {}
 
-  const patch = {
-    title: aiTitle,
-    persona: adapted?.persona || "General Public",
-    sections: Array.isArray(adapted?.sections) ? adapted.sections : [],
-    meta: {
-      ...(adapted?.meta || {}),
-      ...(current?.meta?.paperId ? { paperId: current.meta.paperId } : {}),
-      ...(current?.meta?.paperUrl ? { paperUrl: current.meta.paperUrl } : {}),
-      docTitle: adapted?.docTitle || null,
-      aiTitle,
-    },
+  const prevMeta      = current?.meta || {};
+  const explainedMeta = adapted?.meta || {};
+
+  // 2) MERGE meta, ma lasciando vincere SEMPRE quello di /api/explain
+  const mergedMeta = {
+    // roba vecchia della story (note, upstreamParams, ecc.)
+    ...prevMeta,
+
+    // quello che arriva da /api/explain (paperText, paperId, paperUrl, outline, storytellerParams…)
+    ...explainedMeta,
+
+    // se explain NON avesse paperId/paperUrl, usiamo quelli vecchi come fallback
+    ...(explainedMeta.paperId  ? {} : (prevMeta.paperId  ? { paperId:  prevMeta.paperId }  : {})),
+    ...(explainedMeta.paperUrl ? {} : (prevMeta.paperUrl ? { paperUrl: prevMeta.paperUrl } : {})),
+
+    docTitle: adapted?.docTitle || explainedMeta.docTitle || prevMeta.docTitle || null,
+    aiTitle,
   };
+
+  const patch = {
+    title: aiTitle || current?.title || "Story",
+    persona: adapted?.persona || current?.persona || "General Public",
+    sections: Array.isArray(adapted?.sections) ? adapted.sections : [],
+    meta: mergedMeta,
+  };
+
+  console.debug("[explainPdfAndUpdate] PATCH meta.paperId:", patch.meta.paperId);
+  console.debug("[explainPdfAndUpdate] PATCH has paperText?", !!patch.meta.paperText);
 
   const r = await fetch(`/api/stories/${encodeURIComponent(storyId)}`, {
     method: "PATCH",
@@ -82,6 +121,7 @@ export async function explainPdfAndUpdate(storyId, { file, persona, options = {}
     cache: "no-store",
     body: JSON.stringify(patch),
   });
+
   const t = await r.text().catch(() => "");
   let d; try { d = t ? JSON.parse(t) : {}; } catch { d = { raw: t }; }
 
@@ -92,6 +132,7 @@ export async function explainPdfAndUpdate(storyId, { file, persona, options = {}
   }
   return d;
 }
+
 
 export async function intakePaper({ file, link }) {
   const url = `${API_BASE}/api/papers/intake`;
@@ -134,13 +175,21 @@ export async function attachPaperToStory(storyId, { file, link }) {
   const story = await getRes.json().catch(() => ({}));
   if (!getRes.ok) throw new Error(story?.detail || "Unable to load story to update meta");
 
+  // 🔴 se c'è già paperText, NON toccare nulla
+  if (story?.meta?.paperText) {
+    console.debug("[attachPaperToStory] story has paperText, skip overriding paperId/paperUrl");
+    return {
+      paperId: story.meta.paperId,
+      paperUrl: story.meta.paperUrl,
+    };
+  }
+
   const nextMeta = {
     ...(story?.meta || {}),
     paperId,
-    paperUrl, // 👈 usato da Stories.jsx → handleReadOnPaper
+    paperUrl, // usato da Stories.jsx → handleReadOnPaper
   };
 
-  // 3) PATCH con il meta aggiornato
   const patch = { meta: nextMeta };
   const upRes = await fetch(`/api/stories/${encodeURIComponent(storyId)}`, {
     method: "PATCH",

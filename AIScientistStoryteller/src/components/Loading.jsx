@@ -24,6 +24,7 @@ export default function Loading({
   genericMsgs = ["Loading…"],
   timeline = [],
   currentStep = -1,
+  inQueue = false
 }) {
   const TICK_MS = 2600;
   const PHASE_CHANGE_FREEZE_MS = 3200;
@@ -90,6 +91,14 @@ export default function Loading({
                   </span>
                 </div>
               ))}
+            </div>
+          )}
+
+          {inQueue && (
+            <div className={styles.queueNotice}>
+              The server is currently busy with other users.  
+              <br />
+              You are now in queue — your request will start automatically.
             </div>
           )}
 

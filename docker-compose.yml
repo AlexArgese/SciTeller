@@ -26,8 +26,8 @@ services:
       HF_HOME: /hf-cache
       HUGGINGFACE_HUB_CACHE: /hf-cache/hub
       TRANSFORMERS_CACHE: /hf-cache/transformers
-      HF_HUB_OFFLINE: "1"      
-      TRANSFORMERS_OFFLINE: "1"
+      HF_HUB_OFFLINE: "0"      
+      TRANSFORMERS_OFFLINE: "0"
 
       PAPERS_DIR: /data/papers
       DATABASE_URL: ${DATABASE_URL}

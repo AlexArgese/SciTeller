@@ -1,7 +1,7 @@
 import { useRef, useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { explainPdfAndUpdate, attachPaperToStory } from "../services/explainApi.js";
-import { createStory, updateStory, deleteStory } from "../services/storiesApi.js";
+import { createStory, /* updateStory, */ deleteStory } from "../services/storiesApi.js";
 import styles from "./Home.module.css";
 import Loading from "../components/Loading.jsx";
 const API_BASE = import.meta.env.VITE_API_BASE || "/svc";
@@ -212,6 +212,14 @@ export default function Home() {
       if (evt.title) {
         // forza il messaggio attivo in Loading col titolo (lo passa via props)
       }
+      if (phase === "story") {
+        if (queueTimerRef.current) {
+          clearTimeout(queueTimerRef.current);
+          queueTimerRef.current = null;
+        }
+        setInQueue(false);
+      }
+      const t = evt?.type;
       return;
     }
     if (t === "section_done") {
@@ -373,24 +381,15 @@ export default function Home() {
       const created = await createStory(provisional);
 
       try {
-          // ✅ SEMPRE: se c'è un link, registralo in DB e attaccalo alla story
-          let linkMeta = null;
-          if (link.trim()) {
-            linkMeta = await attachPaperToStory(created.id, { link: link.trim() });
-          }
-        // 4) genera **e salva**
-        await explainPdfAndUpdate(created.id, { file: pdfFile, persona, options, jobId });
-        // ✅ Se vogliamo “solo link”, ri-applica il link nella meta (preserva contro overwrite)
-        if (linkMeta?.paperId || linkMeta?.paperUrl) {
-          await updateStory(created.id, {
-            meta: {
-              ...(created.meta || {}),
-              paperId: linkMeta.paperId || created?.meta?.paperId || null,
-              paperUrl: linkMeta.paperUrl || created?.meta?.paperUrl || null,
-            }
-          });
+        // se c'è il link, registralo in DB e attaccalo alla story
+        if (link.trim()) {
+          await attachPaperToStory(created.id, { link: link.trim() });
         }
-        // 5) ok → vai alle stories
+
+        // genera **e salva** (questa PATCH scrive già il meta giusto con paperText)
+        await explainPdfAndUpdate(created.id, { file: pdfFile, persona, options, jobId });
+
+        // vai alle stories
         navigate("/stories");
       } catch (innerErr) {
         try { await deleteStory(created.id); } catch {}
@@ -411,6 +410,41 @@ export default function Home() {
   const step1Done = Boolean(fileObj || link.trim());
   const step2Done = Boolean(persona);
   const canGenerate = step1Done && step2Done;
+
+  const [inQueue, setInQueue] = useState(false);
+  const queueTimerRef = useRef(null);
+
+  useEffect(() => {
+    // se non sto caricando → niente coda
+    if (!isLoading) {
+      setInQueue(false);
+      if (queueTimerRef.current) clearTimeout(queueTimerRef.current);
+      queueTimerRef.current = null;
+      return;
+    }
+
+    // la queue ha senso solo durante la fase "story" (VM)
+    if (phase !== "story") {
+      setInQueue(false);
+      if (queueTimerRef.current) clearTimeout(queueTimerRef.current);
+      queueTimerRef.current = null;
+      return;
+    }
+
+    // sto entrando in fase story → preparo il timer queue
+    setInQueue(false);
+    if (queueTimerRef.current) clearTimeout(queueTimerRef.current);
+
+    queueTimerRef.current = setTimeout(() => {
+      setInQueue(true);
+    }, 5000); // 5 secondi di “silenzio” = probabilmente in coda
+
+    return () => {
+      if (queueTimerRef.current) clearTimeout(queueTimerRef.current);
+      queueTimerRef.current = null;
+    };
+  }, [isLoading, phase]);
+
 
   if (isLoading) {
     return (
@@ -434,6 +468,7 @@ export default function Home() {
         genericMsgs={["Working…"]}
         timeline={outlineTitles}
         currentStep={currentSection}
+        inQueue={inQueue}
       />
     );
   }

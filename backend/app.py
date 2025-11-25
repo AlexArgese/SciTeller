@@ -1,7 +1,7 @@
 # backend/app.py — FastAPI for AI Scientist Storyteller (Mac backend)
 # run: uvicorn app:app --reload --port 8000
 
-import os, tempfile, subprocess, json, sys, pathlib, re
+import os, tempfile, subprocess, json, sys, pathlib, re, hashlib
 from typing import Optional, List, Dict, Any
 import uuid
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Body
@@ -9,6 +9,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
 import requests
+import numpy as np
+from sentence_transformers import SentenceTransformer, util
 
 # === NEW: progress broker / SSE / misc ===
 import asyncio, uuid
@@ -41,6 +43,15 @@ RETRIEVAL_DEFAULTS = {
     "overlap_words": 60,
 }
 
+_EMBEDDER = None
+
+def get_embedder():
+    global _EMBEDDER
+    if _EMBEDDER is None:
+        # stesso modello usato come retriever di default
+        _EMBEDDER = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+    return _EMBEDDER
+
 
 def resolve_length_params(preset: str | None, words: int | None):
     p = (preset or "medium").lower()
@@ -72,6 +83,50 @@ def _extract_blocks(md_text: str):
             btype = "unknown"
         blocks.append({"type": btype, "content": content})
     return blocks
+
+def extract_text_spans_with_layout(md_text: str):
+    pattern = re.compile(r"<!--\s*(\{.*?\})\s*--\!?>", re.DOTALL)
+    matches = list(pattern.finditer(md_text or ""))
+    spans = []
+
+    for idx, m in enumerate(matches):
+        meta_json = m.group(1)
+        next_start = matches[idx + 1].start() if idx + 1 < len(matches) else len(md_text)
+        content = md_text[m.end():next_start]
+
+        try:
+            meta = json.loads(meta_json)
+        except Exception:
+            continue
+
+        btype = str(meta.get("type", "")).lower()
+        if btype != "text":
+            continue  
+
+        cleaned = _clean_text_paragraph(content)
+        if not cleaned:
+            continue
+
+        pages = meta.get("pages") or [meta.get("page", 1)]
+        bboxes = meta.get("bboxes") or meta.get("bbox_norm") or meta.get("bbox") or None
+
+        if isinstance(bboxes, list) and len(bboxes) and isinstance(bboxes[0], list):
+            # più bboxes → più spans, stesso testo
+            for p, b in zip(pages, bboxes):
+                spans.append({
+                    "page": int(p),              # già 1-based
+                    "bbox": [float(x) for x in b[:4]],
+                    "text": cleaned,
+                })
+        else:
+            # fallback: una sola bbox
+            spans.append({
+                "page": int(pages[0] or 1),
+                "bbox": bboxes if isinstance(bboxes, list) else None,
+                "text": cleaned,
+            })
+
+    return spans
 
 def _clean_text_paragraph(txt: str) -> str:
     txt = re.sub(r"<!--.*?--\!?>", "", txt, flags=re.DOTALL).strip()
@@ -378,6 +433,56 @@ def _norm_url(u: str) -> str:
     if u.endswith("/"): u = u[:-1]
     return u
 
+def _get_or_create_paper_upload(pdf_bytes: bytes, filename: str) -> tuple[str, str | None, bool]:
+    """
+    Dedup per PDF uploadati, basata su colonna `sha256`.
+
+    Ritorna:
+      - paper_id: id del paper
+      - file_url: URL del PDF sulla VM (può essere relativo tipo /papers/...)
+      - dedup: True se il PDF era già in DB (stesso sha256), False se è nuovo
+    """
+    digest = hashlib.sha256(pdf_bytes).hexdigest()
+
+    with db_conn() as conn, conn.cursor() as cur:
+        # 1) cerco se esiste già un upload con lo stesso hash
+        cur.execute("""
+            SELECT id, url, file_path
+            FROM papers
+            WHERE sha256 = %s
+              AND source_type = 'upload'
+            LIMIT 1
+        """, (digest,))
+        row = cur.fetchone()
+
+        if row:
+            existing_id, existing_url, existing_path = row
+
+            # caso ideale: abbiamo già un URL usabile (es. /papers/xxx.pdf sulla VM)
+            if existing_url:
+                return existing_id, existing_url, True
+
+            # vecchi record "local-only": riuso l'id ma ricarico il file sulla VM
+            paper_id = existing_id
+        else:
+            # nessun match → nuovo paper_id
+            paper_id = str(uuid.uuid4())
+
+        # 2) upload verso la VM con questo paper_id
+        file_url = _vm_upload_pdf(paper_id, filename, pdf_bytes)
+
+        # 3) scrivo/aggiorno riga in DB con sha256
+        cur.execute("""
+            INSERT INTO papers (id, source_type, url, sha256, created_at)
+            VALUES (%s, 'upload', %s, %s, now())
+            ON CONFLICT (id) DO UPDATE
+            SET url = EXCLUDED.url,
+                source_type = 'upload',
+                sha256 = EXCLUDED.sha256
+        """, (paper_id, file_url, digest))
+
+    # se row esisteva → dedup=True, altrimenti False
+    return paper_id, file_url, bool(row)
 
 # ========= Helpers =========
 def _vm_upload_pdf(paper_id: str, filename: str, pdf_bytes: bytes) -> str | None:
@@ -508,22 +613,15 @@ async def explain_endpoint(
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(400, "Please upload a .pdf")
     
-    # --- [A] Salva PDF remoto su VM per la visualizzazione successiva ---
+    # --- [A] Dedup + upload PDF su VM per la visualizzazione successiva ---
     pdf_bytes = await file.read()
-    paper_id = str(uuid.uuid4())
-    file_url = _vm_upload_pdf(paper_id, file.filename, pdf_bytes)
+    paper_id, file_url, dedup = _get_or_create_paper_upload(pdf_bytes, file.filename)
     view_url = f"/api/papers/{paper_id}/pdf"
+    print(f"[/api/explain] paper_id={paper_id}, dedup={dedup}")
 
-    if file_url:
-        with db_conn() as conn, conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO papers (id, source_type, url, created_at)
-                VALUES (%s, 'upload', %s, now())
-                ON CONFLICT (id) DO UPDATE
-                SET url = EXCLUDED.url, source_type='upload'
-            """, (paper_id, file_url))
-    else:
-        print("[UPLOAD] nessun file_url (upload fallito)")
+    if not file_url:
+        print("[UPLOAD] nessun file_url restituito da _get_or_create_paper_upload")
+
     
     # progress: job id
     job_id = (jobId or str(uuid.uuid4()))
@@ -627,6 +725,7 @@ async def explain_endpoint(
             "lengthPreset": st_preset,
             "creativity": int(float(temp) * 100),
             "outline": outline,
+            "dedup": bool(dedup),
             "storytellerParams": {
                 "temperature": float(temp),
                 "top_p": float(top_p),
@@ -760,20 +859,12 @@ async def intake_paper(
     dedup = False
     paper_url = None
 
-    # ====== Caso A: UPLOAD PDF ======
+    # ====== Caso A: UPLOAD PDF (con dedup su sha256) ======
     if file is not None:
         pdf_bytes = await file.read()
-        file_url = _vm_upload_pdf(paper_id, file.filename, pdf_bytes)
+        paper_id, file_url, dedup = _get_or_create_paper_upload(pdf_bytes, file.filename)
+        return {"paper_id": paper_id, "dedup": bool(dedup), "paper_url": file_url}
 
-        with db_conn() as conn, conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO papers (id, source_type, url, created_at)
-                VALUES (%s, 'upload', %s, now())
-                ON CONFLICT (id) DO UPDATE
-                SET url = EXCLUDED.url, source_type='upload'
-            """, (paper_id, file_url))
-
-        return {"paper_id": paper_id, "dedup": False, "paper_url": file_url}
 
     # ====== Caso B: LINK remoto ======
     if link:
@@ -1043,8 +1134,134 @@ def regen_paragraph_vm(req: RegenParagraphVmReq):
     }
 
 @app.post("/api/locate_section")
-def locate_section_stub():
-    return {"best": {"page": 1, "bbox": [0.10, 0.18, 0.90, 0.30]}, "alternatives": [], "meta": {"score": 0.99}}
+def locate_section(body: dict = Body(...)):
+    """
+    Trova i blocchi del PDF più simili alla section della story.
+
+    Input (dal frontend):
+    {
+      "paperId": "...",
+      "section_text": "...",
+      "section_title": "...",
+      "W": 3,         # (per ora ignorato)
+      "topk": 8,      # usato solo come limite tecnico, NON come numero di match mostrati
+      "paperText": "markdown docparse con meta {type,page,bbox} nei commenti"
+    }
+
+    Output:
+    {
+      "best": { "page": int (0-based), "bbox": [x1,y1,x2,y2], "score": float },
+      "alternatives": [ { "page": ..., "bbox": [...], "score": ... }, ... ],
+      "meta": { "score": best_score }
+    }
+    """
+    paper_id      = body.get("paperId")
+    section_text  = (body.get("section_text")  or "").strip()
+    section_title = (body.get("section_title") or "").strip()
+    W             = int(body.get("W") or 3)
+    topk          = int(body.get("topk") or 8)
+    md_text       = (body.get("paperText") or "").strip()
+
+    if not md_text:
+        # se manca il testo annotato, fallback stub
+        return {
+            "best": {"page": 0, "bbox": [0.10, 0.18, 0.90, 0.30], "score": 0.0},
+            "alternatives": [],
+            "meta": {"score": 0.0, "reason": "missing_paperText"},
+        }
+
+    spans = extract_text_spans_with_layout(md_text)
+    if not spans:
+        return {
+            "best": {"page": 0, "bbox": [0.10, 0.18, 0.90, 0.30], "score": 0.0},
+            "alternatives": [],
+            "meta": {"score": 0.0, "reason": "no_text_spans"},
+        }
+
+    # 👇 nuovo check: se tutte le pagine sono 0 e tutte le bbox sono None → layout mancante
+    all_pages = {s.get("page", 0) for s in spans}
+    all_bbox_none = all(s.get("bbox") is None for s in spans)
+
+    if all_pages == {0} and all_bbox_none:
+        return {
+            "best": {"page": 0, "bbox": [0.10, 0.18, 0.90, 0.30], "score": 0.0},
+            "alternatives": [],
+            "meta": {
+                "score": 0.0,
+                "n_spans": len(spans),
+                "reason": "no_layout_info_in_meta"
+            },
+        }
+
+
+    # testo query: titolo + testo se entrambi presenti
+    query_text = (section_title + "\n\n" + section_text).strip() or section_text or section_title
+    if not query_text:
+        return {
+            "best": {"page": spans[0]["page"], "bbox": spans[0]["bbox"], "score": 0.0},
+            "alternatives": [],
+            "meta": {"score": 0.0, "reason": "empty_section_text"},
+        }
+
+    model = get_embedder()
+    # embed normalizzati (cosine = dot product)
+    q_emb = model.encode(query_text, convert_to_tensor=True, normalize_embeddings=True)
+    docs_emb = model.encode([s["text"] for s in spans], convert_to_tensor=True, normalize_embeddings=True)
+
+    # cosine similarity
+    scores = util.cos_sim(q_emb, docs_emb)[0].cpu().numpy()  # shape: (n_spans,)
+    scores = scores.astype(float)
+
+    # ordina per score decrescente
+    order = np.argsort(-scores)
+    # limita a topk candidati per ragioni di efficienza
+    if topk > 0 and topk < len(order):
+        order = order[:topk]
+
+    # se i punteggi sono tutti molto bassi → fallback
+    best_idx = int(order[0])
+    best_score = float(scores[best_idx])
+    print("[DEBUG locate] span[best_idx] meta:", spans[best_idx])
+
+    # ⚖️ Soglia dinamica (non un numero a caso):
+    #  - base_floor = 0.35 (sotto è troppo rumore)
+    #  - margine relativo: ammettiamo match entro 0.15 dal best
+    base_floor = 0.70
+    rel_margin = 0.15
+    threshold = max(base_floor, best_score - rel_margin)
+
+    # prendi tutti i candidati sopra soglia (ordinati)
+    good_indices = [int(i) for i in order if scores[int(i)] >= threshold]
+
+    # fallback: se proprio nessuno supera la soglia, prendi solo il best
+    if not good_indices:
+        good_indices = [best_idx]
+
+
+    def _mk_entry(idx: int) -> dict:
+        span = spans[idx]
+        bbox = span.get("bbox") or [0.10, 0.18, 0.90, 0.30]
+
+        # docparse usa pagine 0-based → qui le convertiamo a 1-based per il client
+        page0 = int(span.get("page", 0) or 0)
+        page1 = page0 + 1
+
+        return {
+            "page": page1,   # 👈 ora l’API è 1-based
+            "bbox": [float(b) for b in bbox[:4]],
+            "score": float(scores[idx]),
+        }
+
+
+    best_entry = _mk_entry(good_indices[0])
+    alt_entries = [_mk_entry(i) for i in good_indices[1:]]
+
+    return {
+        "best": best_entry,
+        "alternatives": alt_entries,
+        "meta": {"score": best_entry["score"], "n_spans": len(spans), "threshold": threshold},
+    }
+
 
 import requests
 from fastapi.responses import StreamingResponse
@@ -1071,3 +1288,31 @@ def get_paper_pdf(paper_id: str):
                                  headers={"Content-Disposition": f'inline; filename="{paper_id}.pdf"'})
     except requests.RequestException as e:
         raise HTTPException(502, f"Upstream error: {e}")
+    
+
+from fastapi.responses import StreamingResponse
+
+@app.get("/api/pdf-proxy")
+def pdf_proxy(url: str):
+    """
+    Proxy per PDF esterni: evita problemi CORS lato browser.
+    Uso: /svc/api/pdf-proxy?url=...
+    """
+    if not url:
+        raise HTTPException(400, "url query param is required")
+
+    try:
+        r = requests.get(url, stream=True, timeout=60)
+    except requests.RequestException as e:
+        raise HTTPException(502, f"Upstream fetch failed: {e}")
+
+    if not r.ok:
+        raise HTTPException(r.status_code, f"Upstream returned {r.status_code}")
+
+    return StreamingResponse(
+        r.iter_content(chunk_size=65536),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": 'inline; filename="proxied.pdf"',
+        },
+    )
