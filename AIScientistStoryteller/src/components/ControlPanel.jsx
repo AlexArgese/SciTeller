@@ -863,10 +863,9 @@ function StoryControls({
             <option>Investor</option>
             <option>Student</option>
             <option>Journalist</option>
-            <option>Developer</option>
             <option>Policy Maker</option>
             <option>Teacher</option>
-            <option>Researcher</option>
+            <option>Researchers & Engineers</option>
           </select>
         </div>
       </div>

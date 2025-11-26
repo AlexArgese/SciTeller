@@ -9,7 +9,7 @@ const API_BASE = import.meta.env.VITE_API_BASE || "/svc";
 // ===== Personas (icone stilizzate + caption dinamica) =====
 const PERSONAS = [
   "General Public","Investor","Student","Journalist",
-  "Developer","Policy Maker","Teacher","Researcher",
+  "Policy Maker","Teacher","Researchers & Engineers",
 ];
 
 const PERSONA_META = {
@@ -17,11 +17,15 @@ const PERSONA_META = {
   "Investor": { tone: "Concise & impact-focused", context: "Business / ROI", Icon: InvestorIcon },
   "Student": { tone: "Simplified academic", context: "Educational use", Icon: StudentIcon },
   "Journalist": { tone: "Clear & news-oriented", context: "Media coverage", Icon: JournalistIcon },
-  "Developer": { tone: "Technical & actionable", context: "Implementation details", Icon: DeveloperIcon },
   "Policy Maker": { tone: "Brief & evidence-based", context: "Policy implications", Icon: PolicyIcon },
   "Teacher": { tone: "Didactic & structured", context: "Classroom explanation", Icon: TeacherIcon },
-  "Researcher": { tone: "Academic & rigorous", context: "Research insights", Icon: ResearcherIcon },
+  "Researchers & Engineers": {
+    tone: "Technical & rigorous",
+    context: "Advanced research & implementation",
+    Icon: ResearchersEngineersIcon,
+  },
 };
+
 
 // === Icone stilizzate (SVG semplici, no emoji) ===
 function baseSvg(props) { return { width: 20, height: 20, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round", ...props }; }
@@ -29,10 +33,16 @@ function GeneralPublicIcon(props){ return (<svg {...baseSvg(props)}><circle cx="
 function InvestorIcon(props){ return (<svg {...baseSvg(props)}><path d="M3 17h18"/><path d="M7 17V7l4 3 6-5v12"/></svg>); }
 function StudentIcon(props){ return (<svg {...baseSvg(props)}><path d="M3 7l9-4 9 4-9 4-9-4z"/><path d="M12 11v6"/><path d="M6 13v4a6 3 0 0 0 12 0v-4"/></svg>); }
 function JournalistIcon(props){ return (<svg {...baseSvg(props)}><rect x="3" y="4" width="14" height="16" rx="2"/><path d="M7 8h6M7 12h6M7 16h4"/><path d="M17 8h4v8a4 4 0 0 1-4 4"/></svg>); }
-function DeveloperIcon(props){ return (<svg {...baseSvg(props)}><path d="M8 9l-4 3 4 3"/><path d="M16 9l4 3-4 3"/><path d="M12 8l-2 8"/></svg>); }
 function PolicyIcon(props){ return (<svg {...baseSvg(props)}><path d="M6 3h12v6H6z"/><path d="M6 9v12h12V9"/><path d="M10 13h4M10 17h4"/></svg>); }
 function TeacherIcon(props){ return (<svg {...baseSvg(props)}><path d="M4 19V6l8-3 8 3v13"/><path d="M12 22v-9"/><path d="M7 9h10"/></svg>); }
-function ResearcherIcon(props){ return (<svg {...baseSvg(props)}><circle cx="10" cy="10" r="5"/><path d="M14.5 14.5L21 21"/></svg>); }
+function ResearchersEngineersIcon(props){
+  return (
+    <svg {...baseSvg(props)}>
+      <circle cx="10" cy="10" r="5"/>
+      <path d="M14.5 14.5L21 21"/>
+    </svg>
+  );
+}
 
 // ===== Messaggi di stato lettura/generazione =====
 const TICK_MS = 2600;
@@ -322,14 +332,12 @@ export default function Home() {
         return { ...base, preset: "medium", k: 4, max_ctx_chars: 1800, temperature: capTemp(0.5) };
       case "Journalist":
         return { ...base, preset: "medium", k: 4, max_ctx_chars: 2000, temperature: capTemp(0.5) };
-      case "Developer":
-        return { ...base, preset: "medium", k: 5, max_ctx_chars: 2400, temperature: capTemp(0.4) };
       case "Policy Maker":
         return { ...base, preset: "medium", k: 5, max_ctx_chars: 2200, temperature: capTemp(0.4) };
       case "Teacher":
         return { ...base, preset: "long", k: 6, max_ctx_chars: 2600, temperature: capTemp(0.35) };
-      case "Researcher":
-        return { ...base, preset: "long", k: 6, max_ctx_chars: 3000, temperature: capTemp(0.3) };
+      case "Researchers & Engineers":
+        return { ...base, preset: "long", k: 6, max_ctx_chars: 3000, temperature: capTemp(0.3) };    
       default:
         return { ...base, preset: "medium", k: 4, max_ctx_chars: 1800, temperature: capTemp(0.5) };
     }
