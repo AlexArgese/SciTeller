@@ -17,7 +17,11 @@ function mergeSections(prevSections = [], patchSections = []) {
   }
   return out;
 }
-
+function clean(obj) {
+  return Object.fromEntries(
+    Object.entries(obj).filter(([_, v]) => v !== undefined)
+  );
+}
 async function loadOwnedStory(userId, storyId) {
   const [s] = await db
     .select()
@@ -26,6 +30,7 @@ async function loadOwnedStory(userId, storyId) {
     .limit(1);
   return s || null;
 }
+
 
 async function loadRevisionById(storyId, revId) {
   const [rev] = await db.select().from(storyRevisions)
@@ -48,40 +53,107 @@ async function getDefaultRevision(story) {
 }
 
 function materialize(story, rev) {
-  // prova: colonna sections → poi content JSON → altrimenti []
   let sections = Array.isArray(rev?.sections) ? rev.sections : [];
   if ((!sections || sections.length === 0) && rev?.content) {
     let c = rev.content;
     if (typeof c === "string") { try { c = JSON.parse(c); } catch { c = null; } }
     if (c && Array.isArray(c.sections)) sections = c.sections;
   }
-  const meta = rev?.meta ?? {};
-  const hasAgg = meta && (meta.currentAggregates || meta.aggregates);
-  const aggregates = hasAgg
-    ? (meta.currentAggregates || meta.aggregates)
-    : computeAggregatesFromSections(sections, meta);
 
-    return {
-      id: story.id,
-      title: story.title,
-      createdAt: story.createdAt,
-      updatedAt: story.updatedAt,
-      visibility: story.visibility,
-      current_revision_id: story.currentRevisionId,
-      persona: rev?.persona ?? null,
-      // 👇 inietto
-      meta: {
-        ...meta,
-        currentAggregates: aggregates,
-      },
-      sections,
-      content: rev?.content ?? null,
-    };
+  const meta = rev?.meta ?? {};
+  const aggregates = computeAggregatesFromSections(sections, meta);
+
+  const clientSections = normalizeSectionsForClient(sections);
+
+  return {
+    id: story.id,
+    title: story.title,
+    createdAt: story.createdAt,
+    updatedAt: story.updatedAt,
+    visibility: story.visibility,
+    current_revision_id: story.currentRevisionId,
+    persona: rev?.persona ?? null,
+    meta: {
+      ...meta,
+      currentAggregates: aggregates,
+    },
+    sections: clientSections,
+    content: rev?.content ?? null,
+  };
 }
+
+
+
+function resolveBaseKnobs(meta = {}) {
+  const up = meta.upstreamParams || {};
+  const st = meta.storytellerParams || meta.storyteller_params || {};
+
+  let baseLen =
+    st.length_preset ||
+    st.lengthPreset ||
+    up.lengthPreset ||
+    meta.lengthPreset ||
+    null;
+
+  if (!baseLen) {
+    const words = Number(meta.lengthPerSection);
+    if (Number.isFinite(words)) {
+      if (words <= 120) baseLen = "short";
+      else if (words >= 200) baseLen = "long";
+      else baseLen = "medium";
+    } else {
+      baseLen = "medium";
+    }
+  }
+
+  let baseTemp =
+    typeof st.temperature === "number" ? st.temperature : null;
+
+  if (baseTemp == null && typeof up.temp === "number") {
+    baseTemp = up.temp;
+  }
+
+  if (baseTemp == null && typeof meta.creativity === "number") {
+    baseTemp = meta.creativity / 100;
+  }
+
+  if (baseTemp == null && typeof meta.currentAggregates?.avgTemp === "number") {
+    baseTemp = meta.currentAggregates.avgTemp;
+  }
+
+  if (!Number.isFinite(baseTemp)) baseTemp = 0;
+
+  return { baseLen, baseTemp };
+}
+
+function computeSectionAggregates(section, sectionDefaults) {
+  const paras = Array.isArray(section.paragraphs) ? section.paragraphs : [];
+
+  if (!paras.length) {
+    return {
+      lengthLabel: sectionDefaults.lengthPreset || "medium",
+      avgTemp: sectionDefaults.temp || 0,
+    };
+  }
+
+  const effLens = paras.map((p) =>
+    String(p.lengthPreset || sectionDefaults.lengthPreset || "medium").toLowerCase()
+  );
+
+  const allSameLen = effLens.every((l) => l === effLens[0]);
+  const lengthLabel = allSameLen ? effLens[0] : "mix";
+
+  const temps = paras.map((p) =>
+    typeof p.temp === "number" ? p.temp : sectionDefaults.temp
+  );
+
+  const avgTemp = temps.reduce((a, b) => a + b, 0) / temps.length;
+
+  return { lengthLabel, avgTemp };
+}
+
 function computeAggregatesFromSections(sections, meta = {}) {
-  const up = meta?.upstreamParams || {};
-  const baseLen = up.lengthPreset || "medium";
-  const baseTemp = typeof up.temp === "number" ? up.temp : 0;
+  const { baseLen, baseTemp } = resolveBaseKnobs(meta);
 
   if (!Array.isArray(sections) || sections.length === 0) {
     return {
@@ -91,16 +163,33 @@ function computeAggregatesFromSections(sections, meta = {}) {
     };
   }
 
-  // lunghezze effettive per ogni sezione
-  const effLens = sections.map(s => (s?.lengthPreset ? s.lengthPreset.toLowerCase() : baseLen.toLowerCase()));
-  const allSame = effLens.every(l => l === effLens[0]);
-  const lengthLabel = allSame ? effLens[0] : "mix";
+  const sectionDefaults = { lengthPreset: baseLen, temp: baseTemp };
 
-  // creatività effettiva per ogni sezione
-  const temps = sections.map(s =>
-    typeof s?.temp === "number" ? s.temp : baseTemp
-  );
-  const avgTemp = temps.reduce((a,b)=>a+b,0) / temps.length;
+  const effLens = [];
+  const temps = [];
+
+  for (const s of sections) {
+    const secBase = {
+      lengthPreset: s.lengthPreset || baseLen,
+      temp: typeof s.temp === "number" ? s.temp : baseTemp,
+    };
+
+    if (
+      Array.isArray(s.paragraphs) &&
+      s.paragraphs.some((p) => p && (p.temp != null || p.lengthPreset))
+    ) {
+      const { lengthLabel, avgTemp } = computeSectionAggregates(s, secBase);
+      effLens.push(lengthLabel);
+      temps.push(avgTemp);
+    } else {
+      effLens.push(String(secBase.lengthPreset || "medium").toLowerCase());
+      temps.push(secBase.temp);
+    }
+  }
+
+  const allSame = effLens.every((l) => l === effLens[0]);
+  const lengthLabel = allSame ? effLens[0] : "mix";
+  const avgTemp = temps.reduce((a, b) => a + b, 0) / temps.length;
 
   return {
     lengthLabel,
@@ -108,7 +197,6 @@ function computeAggregatesFromSections(sections, meta = {}) {
     sectionsCount: sections.length,
   };
 }
-
 
 
 export async function GET(_req, { params }) {
@@ -248,18 +336,17 @@ export async function PATCH(req, { params }) {
     // 🔁 costruisci SEMPRE un oggetto JSONB con dentro sections (+ opzionale markdown)
     let nextContentObj;
     if (has("content") && patch.content && typeof patch.content === "object") {
-    // se il client ti manda già un oggetto, prendilo (ma assicurati delle sections)
-    const secs = Array.isArray(patch.content.sections) ? patch.content.sections : nextSections;
-    nextContentObj = { ...patch.content, sections: secs };
+      const secs = Array.isArray(patch.content.sections) ? patch.content.sections : nextSections;
+      nextContentObj = clean({ ...patch.content, sections: secs });
     } else {
     const markdown = nextSections.length ? buildContent(nextSections) : "";
-    nextContentObj = {
-      sections: nextSections,      // <— QUI vivono le sezioni
-      markdown: markdown || undefined, // opzionale, utile per debug
-    };
-    }
+    nextContentObj = clean({
+      sections: nextSections,
+      markdown: markdown || null,
+    });    
+  }
 
-    const revisionalChange =
+  const revisionalChange =
     (has("sections") && !sectionsExplicitButEmpty) || has("persona") || has("meta") || has("content");
 
   let rev = prevRev;
@@ -271,12 +358,18 @@ export async function PATCH(req, { params }) {
 
     // 👇 2) li metto dentro la meta della revisione
     const isFullRegen = Array.isArray(nextSections) && nextSections.length > 0; // puoi specializzarlo
-    const mergedMeta = {
+    let mergedMeta = {
       ...(nextMeta ?? {}),
       currentAggregates: aggregates,
       ...(parentId ? { parentRevisionId: parentId } : {}),
-      ...(isFullRegen ? { lastPartialRegen: undefined } : {}),
     };
+    
+    if (!isFullRegen) {
+      mergedMeta.lastPartialRegen = nextMeta.lastPartialRegen ?? null;
+    }
+    
+    mergedMeta = clean(mergedMeta);
+    
   
     // 👇 3) salvo la revisione con la meta già “pulita”
     const [inserted] = await db.insert(storyRevisions).values({
@@ -303,7 +396,7 @@ export async function PATCH(req, { params }) {
     }
 
     const [updated] = await db.update(stories)
-      .set(nextStoryFields)
+      .set(clean(nextStoryFields))
       .where(eq(stories.id, s.id))
       .returning();
 
@@ -329,6 +422,33 @@ export async function PATCH(req, { params }) {
   }
 }
 
+function normalizeSectionsForClient(sections = []) {
+  return (sections || []).map((sec, i) => {
+    // Normalizza paragraphs: oggetto -> stringa
+    const paras = Array.isArray(sec.paragraphs)
+      ? sec.paragraphs
+          .map((p) =>
+            typeof p === "string" ? p : (p && p.text ? String(p.text) : "")
+          )
+          .filter(Boolean)
+      : [];
+
+    // Se text è [object Object] o vuoto, rigeneralo dai paragrafi
+    let text = sec.text;
+    if (
+      (!text || /\[object Object]/.test(String(text))) &&
+      paras.length > 0
+    ) {
+      text = paras.join("\n\n");
+    }
+
+    return {
+      ...sec,
+      paragraphs: paras,
+      text,
+    };
+  });
+}
 
 
 

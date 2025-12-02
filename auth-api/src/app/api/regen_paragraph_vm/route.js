@@ -10,6 +10,13 @@ const { paragraphVariantBatches, paragraphVariants, stories, storyRevisions } = 
 const REMOTE_GPU_URL = (process.env.REMOTE_GPU_URL || "").replace(/\/$/, "");
 const REMOTE_API_KEY = process.env.REMOTE_API_KEY || process.env.REMOTE_APIKEY || "";
 
+/* -------------------- utils -------------------- */
+function clean(obj = {}) {
+  return Object.fromEntries(
+    Object.entries(obj).filter(([_, v]) => v !== undefined)
+  );
+}
+
 /* -------------------- helpers DB -------------------- */
 async function loadOwnedStory(userId, storyId) {
   const [s] = await db
@@ -48,6 +55,126 @@ async function getDefaultRevision(story) {
   return rev || null;
 }
 
+/* -------------------- aggregati (stessa logica di /api/stories/[id]) -------------------- */
+
+function resolveBaseKnobs(meta = {}) {
+  const up = meta.upstreamParams || {};
+  const st = meta.storytellerParams || meta.storyteller_params || {};
+
+  // ---- lengthPreset ----
+  let baseLen =
+    st.length_preset ||
+    st.lengthPreset ||
+    up.lengthPreset ||
+    meta.lengthPreset ||
+    null;
+
+  if (!baseLen) {
+    const words = Number(meta.lengthPerSection);
+    if (Number.isFinite(words)) {
+      if (words <= 120) baseLen = "short";
+      else if (words >= 200) baseLen = "long";
+      else baseLen = "medium";
+    } else {
+      baseLen = "medium";
+    }
+  }
+
+  // ---- temp (0–1) ----
+  let baseTemp =
+    typeof st.temperature === "number" ? st.temperature : null;
+
+  if (baseTemp == null && typeof up.temp === "number") {
+    baseTemp = up.temp;
+  }
+  if (baseTemp == null && typeof meta.creativity === "number") {
+    // vecchio formato: 30 → 0.3
+    baseTemp = meta.creativity / 100;
+  }
+  if (
+    baseTemp == null &&
+    typeof meta.currentAggregates?.avgTemp === "number"
+  ) {
+    baseTemp = meta.currentAggregates.avgTemp;
+  }
+  if (!Number.isFinite(baseTemp)) baseTemp = 0;
+
+  return { baseLen, baseTemp };
+}
+
+function computeSectionAggregates(section, sectionDefaults) {
+  const paras = Array.isArray(section.paragraphs) ? section.paragraphs : [];
+
+  if (!paras.length) {
+    return {
+      lengthLabel: sectionDefaults.lengthPreset || "medium",
+      avgTemp: sectionDefaults.temp || 0,
+    };
+  }
+
+  const effLens = paras.map((p) =>
+    String(p.lengthPreset || sectionDefaults.lengthPreset || "medium").toLowerCase()
+  );
+
+  const allSameLen = effLens.every((l) => l === effLens[0]);
+  const lengthLabel = allSameLen ? effLens[0] : "mix";
+
+  const temps = paras.map((p) =>
+    typeof p.temp === "number" ? p.temp : sectionDefaults.temp
+  );
+
+  const avgTemp = temps.reduce((a, b) => a + b, 0) / temps.length;
+
+  return { lengthLabel, avgTemp };
+}
+
+function computeAggregatesFromSections(sections, meta = {}) {
+  const { baseLen, baseTemp } = resolveBaseKnobs(meta);
+
+  if (!Array.isArray(sections) || sections.length === 0) {
+    return {
+      lengthLabel: baseLen,
+      avgTemp: baseTemp,
+      sectionsCount: 0,
+    };
+  }
+
+  const effLens = [];
+  const temps = [];
+
+  for (const s of sections) {
+    const secBase = {
+      lengthPreset: s.lengthPreset || baseLen,
+      temp: typeof s.temp === "number" ? s.temp : baseTemp,
+    };
+
+    // sezione con paragrafi "ricchi" (temp / lengthPreset) → media sui paragrafi
+    if (
+      Array.isArray(s.paragraphs) &&
+      s.paragraphs.some((p) => p && (p.temp != null || p.lengthPreset))
+    ) {
+      const { lengthLabel, avgTemp } = computeSectionAggregates(s, secBase);
+      effLens.push(lengthLabel);
+      temps.push(avgTemp);
+    } else {
+      // fallback: usa i knob standard di sezione
+      effLens.push(String(secBase.lengthPreset || "medium").toLowerCase());
+      temps.push(secBase.temp);
+    }
+  }
+
+  const allSame = effLens.every((l) => l === effLens[0]);
+  const lengthLabel = allSame ? effLens[0] : "mix";
+  const avgTemp = temps.reduce((a, b) => a + b, 0) / temps.length;
+
+  return {
+    lengthLabel,
+    avgTemp,
+    sectionsCount: sections.length,
+  };
+}
+
+/* -------------------- materialize -------------------- */
 function materialize(story, rev) {
   let sections = Array.isArray(rev?.sections) ? rev.sections : [];
   if ((!sections || sections.length === 0) && rev?.content) {
@@ -163,36 +290,6 @@ function rebuildPaperTextFromSections(sections = []) {
     })
     .filter(Boolean)
     .join("\n\n");
-}
-function computeAggregatesFromSections(sections, meta = {}) {
-  const up = meta?.upstreamParams || {};
-  const baseLen = up.lengthPreset || "medium";
-  const baseTemp = typeof up.temp === "number" ? up.temp : 0;
-
-  if (!Array.isArray(sections) || sections.length === 0) {
-    return {
-      lengthLabel: baseLen,
-      avgTemp: baseTemp,
-      sectionsCount: 0,
-    };
-  }
-
-  const effLens = sections.map(s =>
-    s?.lengthPreset ? s.lengthPreset.toLowerCase() : baseLen.toLowerCase()
-  );
-  const allSame = effLens.every(l => l === effLens[0]);
-  const lengthLabel = allSame ? effLens[0] : "mix";
-
-  const temps = sections.map(s =>
-    typeof s?.temp === "number" ? s.temp : baseTemp
-  );
-  const avgTemp = temps.reduce((a,b)=>a+b,0) / temps.length;
-
-  return {
-    lengthLabel,
-    avgTemp,
-    sectionsCount: sections.length,
-  };
 }
 
 /* -------------------- POST handler -------------------- */
@@ -325,7 +422,7 @@ export async function POST(req) {
     );
   }
 
-  // prepara payload
+  // prepara payload per la VM
   const sectionObj = normSections[sectionIndex];
 
   let paragraphs = Array.isArray(sectionObj?.paragraphs) && sectionObj.paragraphs.length > 0
@@ -435,64 +532,63 @@ export async function POST(req) {
   const alternatives = allAlternatives.slice(0, maxByN);
   const effectiveN = alternatives.length;
 
-  const batchId = randomUUID();
-  await db.insert(paragraphVariantBatches).values({
-    id: batchId,
-    storyId: s.id,
-    sectionId: sectionIdVisible,
-    revisionId: prevRev?.id || null,
-    sectionIndex,
-    paragraphIndex,
-    ops: { paraphrase, simplify, lengthOp, temp, top_p, lengthPreset, n: effectiveN },
-    createdAt: new Date(),
-  });
-
-  const variantRows = alternatives.map((text, i) => ({
-    id: randomUUID(),
-    batchId,
-    rank: i,
-    text,
-    createdAt: new Date(),
-  }));
-  await db.insert(paragraphVariants).values(variantRows);
-
-  // Applica la prima alternativa
+  // 1) Applica la prima alternativa e costruisci la NUOVA revisione
   const chosen = alternatives[0] || paragraphText;
 
-  // costruisci nuove sections
   const nextSections = normSections.map((secItem, i) => {
     if (i !== sectionIndex) return secItem;
-    const nextParas = [...secItem.paragraphs];
-    nextParas[paragraphIndex] = chosen;
-    return {
-      ...secItem,
-      paragraphs: nextParas,
-      text: nextParas.join("\n\n"),
+
+    const nextParas = secItem.paragraphs.map((p) => {
+      if (typeof p === "string") {
+        return { text: p };
+      }
+      return p || { text: "" };
+    });
+
+    nextParas[paragraphIndex] = {
+      text: chosen,
       temp,
       lengthPreset,
     };
-  });   
 
-  const nextContentObj = {
+    return {
+      ...secItem,
+      paragraphs: nextParas,
+      text: nextParas.map((p) => p.text).join("\n\n"),
+    };
+  });
+
+  const nextContentObj = clean({
     ...(effContentObj && typeof effContentObj === "object" ? effContentObj : {}),
     sections: nextSections,
     markdown: undefined,
-  };
+  });
 
-  // NOTE DELL’UTENTE (stringa)
   const userNotes = (typeof body?.notes === "string" && body.notes.trim())
     ? body.notes.trim()
     : null;
 
-  // meta merged con traccia operazione + MIRROR notes in meta.notes
   const baseMeta = prevRev?.meta || {};
+  // normalizziamo i paragrafi di tutte le sezioni
+  const normalizedForAggregates = nextSections.map(sec => {
+    const paras = (sec.paragraphs || []).map(p =>
+      typeof p === "string" ? { text: p } : p
+    );
+    return {
+      ...sec,
+      paragraphs: paras
+    };
+  });
 
-  // ricalcola aggregati dopo il cambio del paragrafo
-  const currentAggregates =
-    baseMeta.currentAggregates ||
-    computeAggregatesFromSections(nextSections, baseMeta);
+  // compute senza forzare default 0/medium
+  const currentAggregates = computeAggregatesFromSections(normalizedForAggregates, {
+    ...baseMeta,
+    upstreamParams: {
+      ...(baseMeta.upstreamParams || {})
+    }
+  });
 
-  const mergedMeta = {
+  const mergedMeta = clean({
     ...baseMeta,
     currentAggregates,
     lastParagraphEdit: {
@@ -510,11 +606,9 @@ export async function POST(req) {
       fingerprint,
     },
     ...(userNotes ? { notes: userNotes } : {}),
-  };
+    ...(prevRev?.id ? { parentRevisionId: prevRev.id } : {}),
+  });
 
-
-
-  // inserisci nuova revisione
   const [inserted] = await db
     .insert(storyRevisions)
     .values({
@@ -523,20 +617,51 @@ export async function POST(req) {
       content: nextContentObj,
       persona: prevRev?.persona || "General Public",
       meta: mergedMeta,
-      // tieni anche il top-level notes (utile per vecchie UIs / audit)
-      notes: userNotes || `Regenerate PARAGRAPH (${sectionObj?.title || `Section ${sectionIndex+1}`}, ¶${paragraphIndex+1}):`
+      notes:
+        userNotes ||
+        `Regenerate PARAGRAPH (${sectionObj?.title || `Section ${sectionIndex+1}`}, ¶${paragraphIndex+1}):`
         + ` ${paraphrase ? "paraphrase, " : ""}${simplify ? "simplify, " : ""}`
         + `len=${lengthPreset}, temp=${(temp ?? 0).toFixed(2)}, ${effectiveN} alt.`,
       createdAt: new Date(),
     })
     .returning();
 
-  // aggiorna puntatore in stories
   const [updated] = await db
     .update(stories)
     .set({ currentRevisionId: inserted.id, updatedAt: new Date() })
     .where(eq(stories.id, s.id))
     .returning();
+
+  // 2) SOLO ORA salvi il batch + le varianti, agganciandoli ALLA REVISIONE FIGLIA
+  const batchId = randomUUID();
+  await db.insert(paragraphVariantBatches).values({
+    id: batchId,
+    storyId: s.id,
+    baseRevisionId: inserted.id,          // 👈 REVISIONE FIGLIA, NON più prevRev.id
+    sectionId: sectionIdVisible,
+    sectionIndex,
+    paragraphIndex,
+    opsJson: {
+      paraphrase,
+      simplify,
+      lengthOp,
+      temp,
+      top_p,
+      lengthPreset,
+      n: effectiveN,
+    },
+    createdAt: new Date(),
+  });
+
+  const variantRows = alternatives.map((text, i) => ({
+    id: randomUUID(),
+    batchId,
+    rank: i,
+    text,
+    createdAt: new Date(),
+  }));
+  await db.insert(paragraphVariants).values(variantRows);
+  
 
   return NextResponse.json({
     ...materialize(updated, inserted),

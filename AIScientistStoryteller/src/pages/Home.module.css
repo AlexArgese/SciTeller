@@ -183,3 +183,54 @@
 }
 
 .step2 { gap: var(--sp-1); }
+
+/* ========== PDF Link Error Overlay ========== */
+
+.overlayBackdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55); /* più scuro per dare focus */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  backdrop-filter: blur(2px);
+}
+
+.overlayBox {
+  background: var(--paper-0);
+  border: 1px solid var(--glass-line);
+  box-shadow: var(--glass-sd);
+  border-radius: 18px;
+  padding: var(--sp-6) var(--sp-7);
+  max-width: 420px;
+  width: min(90%, 420px);
+  text-align: center;
+}
+
+.overlayTitle {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--heading);
+  margin-bottom: var(--sp-3);
+}
+
+.overlayText {
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.55;
+  margin-bottom: var(--sp-5);
+}
+
+.overlayBtn {
+  composes: btn from global;
+  background: var(--glass-blue-bg);
+  color: #fff;
+  border-radius: 999px;
+  padding: 10px 26px;
+  box-shadow: var(--glass-blue-sd);
+  cursor: pointer;
+}
+.overlayBtn:hover {
+  background: color-mix(in oklab, var(--accent) 80%, var(--glass-blue-bg));
+}

@@ -72,27 +72,48 @@ function splitIntoParagraphs(txt) {
 
 function normalizeSectionsForParagraphs(sectionsRaw = []) {
   return (sectionsRaw || []).map((sec, i) => {
-    const text =
+    const baseText =
       (typeof sec?.text === "string" && sec.text) ||
       (typeof sec?.narrative === "string" && sec.narrative) ||
       "";
-    let paragraphs = Array.isArray(sec?.paragraphs)
-      ? sec.paragraphs.filter(Boolean)
-      : [];
+
+    // 1) prendi i paragrafi, qualsiasi tipo siano, e trasformali in stringhe pulite
+    let paragraphs = Array.isArray(sec?.paragraphs) ? sec.paragraphs : [];
+    paragraphs = paragraphs
+      .map((p) => {
+        if (typeof p === "string") return p.trim();
+        if (p && typeof p.text === "string") return p.text.trim();
+        return "";
+      })
+      .filter(Boolean);
+
+    // 2) se ancora troppo pochi, prova a risplittare dal testo
     if (paragraphs.length <= 1) {
-      const resplit = splitIntoParagraphs(text);
+      const resplit = splitIntoParagraphs(baseText);
       if (resplit.length) paragraphs = resplit;
     }
-    if (paragraphs.length === 0 && text) paragraphs = [text];
+
+    // 3) se proprio non c'è nulla, usa il testo intero come unico paragrafo
+    if (!paragraphs.length && baseText) {
+      paragraphs = [baseText];
+    }
+
+    const joined = paragraphs.join("\n\n");
+
     return {
       ...sec,
       id: String(sec?.id ?? sec?.sectionId ?? i),
       title: sec?.title || `Section ${i + 1}`,
-      paragraphs,
-      text: paragraphs.join("\n\n"),
+      paragraphs,          // <-- sempre array di stringhe
+      text: joined,        // testo coerente
+      narrative:
+        typeof sec?.narrative === "string" && sec.narrative.trim()
+          ? sec.narrative
+          : joined,
     };
   });
 }
+
 
 function materialize(story, rev) {
   let sections = Array.isArray(rev?.sections) ? rev.sections : [];
@@ -177,19 +198,53 @@ export async function POST(req) {
       .limit(1);
     if (!variant) return NextResponse.json({ error: "variant not found in batch" }, { status: 404 });
 
-    // revisione base o default
-    let baseRev = null;
-    if (baseRevisionId && batch.revisionId && String(batch.revisionId) !== String(baseRevisionId)) {
-      // stai provando ad adottare una variante generata su un'altra revisione → errore
-      return NextResponse.json(
-        {
-          error: "mismatching revision",
-          detail: `Batch was generated on revision ${batch.revisionId}, but you requested ${baseRevisionId}`,
-        },
-        { status: 409 }
-      );
+    // ------------------- REVISIONE BASE CORRETTA -------------------
+    let baseRev;
+
+    // 1) Se il batch ha baseRevisionId → è quella la revisione giusta
+    if (batch.baseRevisionId) {
+      const [rev] = await db
+        .select()
+        .from(storyRevisions)
+        .where(
+          and(
+            eq(storyRevisions.id, batch.baseRevisionId),
+            eq(storyRevisions.storyId, s.id)
+          )
+        )
+        .limit(1);
+
+      if (!rev) {
+        return NextResponse.json(
+          { error: "base revision not found for batch" },
+          { status: 409 }
+        );
+      }
+
+      baseRev = rev;
+    } 
+    else {
+      // 2) Fallback → usa la revisione corrente della storia
+      const [rev] = await db
+        .select()
+        .from(storyRevisions)
+        .where(eq(storyRevisions.id, s.currentRevisionId))
+        .limit(1);
+
+      if (!rev) {
+        return NextResponse.json(
+          { error: "story has no current revision" },
+          { status: 409 }
+        );
+      }
+
+      baseRev = rev;
     }
-    const prevRev = baseRev || (await getDefaultRevision(s));
+
+    // ora prevRev è sicuramente la revisione giusta
+    const prevRev = baseRev;
+
+
     if (!prevRev) return NextResponse.json({ error: "no revision to apply on" }, { status: 409 });
 
     // estrai contenuto/sections in modo robusto
@@ -268,22 +323,22 @@ export async function POST(req) {
       notes: safePrevMeta?.notes || `Adopted paragraph variant (sec=${sectionIndex + 1}, ¶=${paragraphIndex + 1})`,
     };
 
-    const updatedContentToSave = JSON.stringify({
+    const updatedContentToSave = {
       ...(effContentObj && typeof effContentObj === "object" ? effContentObj : {}),
       sections: nextSections,
       markdown: undefined,
-    });
+    };
 
-    // aggiorna la row della revisione corrente (in-place)
     await db
       .update(storyRevisions)
       .set({
         content: updatedContentToSave,
-        meta: updatedMeta,                // salva come JSONB/JSON oggetto
+        meta: updatedMeta,
         updatedAt: new Date(),
         notes: `Adopted paragraph variant (sec=${sectionIndex + 1}, ¶=${paragraphIndex + 1})`,
       })
       .where(eq(storyRevisions.id, prevRev.id));
+
     
     if (!s.currentRevisionId || s.currentRevisionId !== prevRev.id) {
       await db

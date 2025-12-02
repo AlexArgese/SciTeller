@@ -148,10 +148,76 @@ function adaptSectionPatch(patch, fallback) {
     visible: fallback?.visible !== false,
   };
 }
+function resolveBaseKnobs(meta = {}) {
+  const up = meta.upstreamParams || {};
+  const st = meta.storytellerParams || meta.storyteller_params || {};
+
+  let baseLen =
+    st.length_preset ||
+    st.lengthPreset ||
+    up.lengthPreset ||
+    meta.lengthPreset ||
+    null;
+
+  if (!baseLen) {
+    const words = Number(meta.lengthPerSection);
+    if (Number.isFinite(words)) {
+      if (words <= 120) baseLen = "short";
+      else if (words >= 200) baseLen = "long";
+      else baseLen = "medium";
+    } else {
+      baseLen = "medium";
+    }
+  }
+
+  let baseTemp =
+    typeof st.temperature === "number" ? st.temperature : null;
+
+  if (baseTemp == null && typeof up.temp === "number") {
+    baseTemp = up.temp;
+  }
+  if (baseTemp == null && typeof meta.creativity === "number") {
+    baseTemp = meta.creativity / 100;
+  }
+  if (
+    baseTemp == null &&
+    typeof meta.currentAggregates?.avgTemp === "number"
+  ) {
+    baseTemp = meta.currentAggregates.avgTemp;
+  }
+  if (!Number.isFinite(baseTemp)) baseTemp = 0;
+
+  return { baseLen, baseTemp };
+}
+
+function computeSectionAggregates(section, sectionDefaults) {
+  const paras = Array.isArray(section.paragraphs) ? section.paragraphs : [];
+
+  if (!paras.length) {
+    return {
+      lengthLabel: sectionDefaults.lengthPreset || "medium",
+      avgTemp: sectionDefaults.temp || 0,
+    };
+  }
+
+  const effLens = paras.map((p) =>
+    String(p.lengthPreset || sectionDefaults.lengthPreset || "medium").toLowerCase()
+  );
+
+  const allSameLen = effLens.every((l) => l === effLens[0]);
+  const lengthLabel = allSameLen ? effLens[0] : "mix";
+
+  const temps = paras.map((p) =>
+    typeof p.temp === "number" ? p.temp : sectionDefaults.temp
+  );
+
+  const avgTemp = temps.reduce((a, b) => a + b, 0) / temps.length;
+
+  return { lengthLabel, avgTemp };
+}
+
 function computeAggregatesFromSections(sections, meta = {}) {
-  const up = meta?.upstreamParams || {};
-  const baseLen = up.lengthPreset || "medium";
-  const baseTemp = typeof up.temp === "number" ? up.temp : 0;
+  const { baseLen, baseTemp } = resolveBaseKnobs(meta);
 
   if (!Array.isArray(sections) || sections.length === 0) {
     return {
@@ -161,16 +227,31 @@ function computeAggregatesFromSections(sections, meta = {}) {
     };
   }
 
-  const effLens = sections.map(s =>
-    s?.lengthPreset ? s.lengthPreset.toLowerCase() : baseLen.toLowerCase()
-  );
-  const allSame = effLens.every(l => l === effLens[0]);
-  const lengthLabel = allSame ? effLens[0] : "mix";
+  const effLens = [];
+  const temps = [];
 
-  const temps = sections.map(s =>
-    typeof s?.temp === "number" ? s.temp : baseTemp
-  );
-  const avgTemp = temps.reduce((a,b)=>a+b,0) / temps.length;
+  for (const s of sections) {
+    const secBase = {
+      lengthPreset: s.lengthPreset || baseLen,
+      temp: typeof s.temp === "number" ? s.temp : baseTemp,
+    };
+
+    if (
+      Array.isArray(s.paragraphs) &&
+      s.paragraphs.some((p) => p && (p.temp != null || p.lengthPreset))
+    ) {
+      const { lengthLabel, avgTemp } = computeSectionAggregates(s, secBase);
+      effLens.push(lengthLabel);
+      temps.push(avgTemp);
+    } else {
+      effLens.push(String(secBase.lengthPreset || "medium").toLowerCase());
+      temps.push(secBase.temp);
+    }
+  }
+
+  const allSame = effLens.every((l) => l === effLens[0]);
+  const lengthLabel = allSame ? effLens[0] : "mix";
+  const avgTemp = temps.reduce((a, b) => a + b, 0) / temps.length;
 
   return {
     lengthLabel,
@@ -178,6 +259,7 @@ function computeAggregatesFromSections(sections, meta = {}) {
     sectionsCount: sections.length,
   };
 }
+
 
 /* ===================== Handler ===================== */
 export async function POST(req) {
@@ -275,7 +357,14 @@ export async function POST(req) {
         ...(knobs?.seg_words              !== undefined ? { seg_words:       knobs.seg_words }              : {}),
         ...(knobs?.overlap_words          !== undefined ? { overlap_words:   knobs.overlap_words }          : {}),
       };      
-
+      console.log("[REGEN_SECTIONS_VM] calling GPU with knobs:", {
+        temp,
+        top_p,
+        lengthPreset,
+        prevUpstream,
+        knobs,
+        targets,
+      });
     // 5) POST alla VM
     let vmRes;
     try {
@@ -314,60 +403,56 @@ export async function POST(req) {
     }
 
     // 7) merge sezioni:
-    //    - se VM ritorna array → sostituisci tutto
-    //    - se ritorna dizionario { "index": patch } → applica patch su baseSections
+    //    - se VM ritorna dizionario { "index": patch } → applica patch su baseSections
+    //    - se ritorna array → usa quelle, ma applica temp/lengthPreset solo sui target
     let mergedSections = baseSections.slice();
-    if (vmData && vmData.sections && typeof vmData.sections === "object" && !Array.isArray(vmData.sections)) {
+
+    if (
+      vmData &&
+      vmData.sections &&
+      typeof vmData.sections === "object" &&
+      !Array.isArray(vmData.sections)
+    ) {
+      // formato: { "0": { ... }, "3": { ... } }
       for (const k of Object.keys(vmData.sections)) {
         const i = Number(k);
-        if (Number.isInteger(i) && i >= 0 && i < mergedSections.length) {
-          mergedSections[i] = {
-            ...adaptSectionPatch(vmData.sections[k], mergedSections[i]),
-            temp,
-            lengthPreset,
-          };
-        }
-      }      
+        if (!Number.isInteger(i) || i < 0 || i >= mergedSections.length) continue;
+
+        const base = mergedSections[i] || {};
+        const patched = adaptSectionPatch(vmData.sections[k], base);
+
+        // questa sezione è sicuramente un target → applichiamo i knob di questa chiamata
+        mergedSections[i] = {
+          ...patched,
+          temp,
+          lengthPreset,
+        };
+      }
     } else if (Array.isArray(vmData.sections)) {
+      // formato: array allineato a baseSections
       mergedSections = vmData.sections.map((sec, idx) => {
         const base = baseSections[idx] || {};
         const patched = adaptSectionPatch(sec, base);
         const isTarget = targets.includes(idx);
+
         return isTarget
-          ? { ...patched, temp, lengthPreset }
-          : patched;
+          ? { ...patched, temp, lengthPreset } // aggiorna solo i target
+          : patched;                           // le altre sezioni restano come erano
       });
-    }  
-    
-    const baseUp = (baseRev?.meta?.upstreamParams) || {};
-    const baseLen = String(baseUp.lengthPreset || "medium").toLowerCase();
-    const baseTemp = Number(isFinite(baseUp.temp) ? baseUp.temp : 0);
+    }
 
-    mergedSections = mergedSections.map((sec) => ({
-      ...sec,
-      lengthPreset: String(sec?.lengthPreset || baseLen).toLowerCase(),
-      temp: (typeof sec?.temp === "number" ? sec.temp : baseTemp),
-    }));
-
-    // 8) Meta: eredita + note + parent + traccia ultima partial-regen
+    // 8) Aggregati: calcola a partire dalle sezioni mergeate,
+    //    senza forzare temp/lengthPreset globali
     const baseMeta = baseRev?.meta || {};
-    const currentAggregates = computeAggregatesFromSections(mergedSections, {
-      ...baseRev?.meta,
-      upstreamParams: { 
-        ...(baseRev?.meta?.upstreamParams || {}),
-        lengthPreset: baseLen,
-        temp: baseTemp,
-      },
-    });
+    const currentAggregates = computeAggregatesFromSections(mergedSections, baseMeta);
 
-
+    // 9) Meta: eredita + note + parent + traccia ultima partial-regen
     const mergedMeta = {
       ...baseMeta,
       ...(vmData?.meta || {}),
       ...(notes ? { notes } : {}),
       ...(baseRev?.id ? { parentRevisionId: baseRev.id } : {}),
-      // 👇 salviamo ANCHE gli aggregati validi
-      currentAggregates: currentAggregates,
+      currentAggregates,
       lastPartialRegen: {
         at: new Date().toISOString(),
         targets,
@@ -376,18 +461,23 @@ export async function POST(req) {
       },
     };
 
-    // 9) salva nuova revisione e aggiorna lo story
+    // 10) salva nuova revisione e aggiorna lo story
     const content = { sections: mergedSections };
-    const [inserted] = await db.insert(storyRevisions).values({
-      id: randomUUID(),
-      storyId: s.id,
-      content,
-      persona,
-      meta: mergedMeta,
-      createdAt: new Date(),
-    }).returning();
 
-    const [updatedStory] = await db.update(stories)
+    const [inserted] = await db
+      .insert(storyRevisions)
+      .values({
+        id: randomUUID(),
+        storyId: s.id,
+        content,
+        persona,
+        meta: mergedMeta,
+        createdAt: new Date(),
+      })
+      .returning();
+
+    const [updatedStory] = await db
+      .update(stories)
       .set({ currentRevisionId: inserted.id, updatedAt: new Date() })
       .where(eq(stories.id, s.id))
       .returning();

@@ -1201,6 +1201,28 @@ function InfoTab({
   sections,
   onJumpToSection,
 }) {
+    // 🔹 Knob di base per la storia (NON la media corrente)
+    const meta = story?.meta || {};
+    const up = meta.upstreamParams || {};
+    const vm = realKnobsFromVM(meta);
+  
+    // creatività base della storia
+    const baseTempStory =
+      typeof up.temp === "number"
+        ? up.temp
+        : typeof vm.temp === "number"
+        ? vm.temp
+        : typeof meta.creativity === "number"
+        ? meta.creativity / 100
+        : 0; // fallback neutro: 0%
+
+    // length base della storia
+    const baseLenStory =
+      up.lengthPreset ||
+      vm.lengthPreset ||
+      lengthPresetDefault ||
+      "medium";
+  
   return (
     <div className={styles.scroll}>
       <div className={styles.scope} ref={scopeTabsRef}>
@@ -1303,43 +1325,79 @@ function InfoTab({
               {sections.map((s, idx) => {
                 const id = s.id ?? s.sectionId ?? String(idx);
 
-                // 1) è una delle sezioni rigenerate per ultime?
                 const touched = isSectionInLastPartial(story, idx);
 
-                // 2) override salvati proprio sulla sezione
-                const hasTempOverride = typeof s?.temp === "number";
-                const hasLenOverride = !!s?.lengthPreset;
+                // 🔹 knob di base della storia (non dagli aggregati ma da meta / upstream)
+                const baseDefaults = defaultsForInfo || {};
+                const baseTempStory = Number.isFinite(baseDefaults.temp)
+                  ? baseDefaults.temp
+                  : typeof tempDefault === "number"
+                  ? tempDefault
+                  : 0;
 
-                // 3) default globali (quelli originali)
-                const globalTemp = defaultsForInfo.temp;
-                const globalLen = defaultsForInfo.lengthPreset;
+                const baseLenStory = String(
+                  baseDefaults.lengthPreset || lengthPresetDefault || "medium"
+                ).toLowerCase();
 
-                // 4) parametri della ULTIMA rigenerazione parziale
-                const last = story?.meta?.lastPartialRegen || {};
-                const lastTemp = typeof last.temp === "number" ? last.temp : null;
-                const lastLen = last.lengthPreset || null;
+                // valori della sezione (se presenti)
+                const rawTemp =
+                  typeof s?.temp === "number" ? s.temp : null;
+                const rawLen = s?.lengthPreset
+                  ? String(s.lengthPreset).toLowerCase()
+                  : null;
 
-                // 5) scegli cosa mostrare DAVVERO
+                // 👇 override solo se DIVERSI dal base
+                const hasTempOverride =
+                  rawTemp != null && Math.abs(rawTemp - baseTempStory) > 1e-3;
+                const hasLenOverride =
+                  rawLen != null && rawLen !== baseLenStory;
+
+                // 👇 paragrafi: se hanno temp/lengthPreset, usali per la media
+                const paras = Array.isArray(s?.paragraphs) ? s.paragraphs : [];
+                const richParas = paras
+                  .map((p) =>
+                    typeof p === "string" ? { text: p } : (p || {})
+                  )
+                  .filter(
+                    (p) =>
+                      p.text &&
+                      (typeof p.temp === "number" || p.lengthPreset)
+                  );
+
                 let effTemp;
                 let effLen;
 
-                // temp
-                if (hasTempOverride) {
-                  effTemp = s.temp;  // la sezione aveva un suo temp
-                } else if (touched && lastTemp != null) {
-                  effTemp = lastTemp;  // questa sezione è stata rigenerata → usa i knob nuovi
+                if (richParas.length > 0) {
+                  // media SOLO su questa sezione
+                  const temps = richParas.map((p) =>
+                    typeof p.temp === "number" ? p.temp : baseTempStory
+                  );
+                  const avgTemp =
+                    temps.reduce((a, b) => a + b, 0) / temps.length;
+
+                  const lens = richParas.map((p) =>
+                    String(
+                      p.lengthPreset || baseLenStory || "medium"
+                    ).toLowerCase()
+                  );
+                  const allSameLen = lens.every((l) => l === lens[0]);
+                  const lenLabel = allSameLen ? lens[0] : "mix";
+
+                  effTemp = avgTemp;
+                  effLen = lenLabel;
                 } else {
-                  effTemp = globalTemp;  // non è stata toccata → mostra i globali vecchi
+                  // nessun dato a livello di paragrafo → usa override di sezione o base globale
+                  effTemp = hasTempOverride ? rawTemp : baseTempStory;
+                  effLen = hasLenOverride ? rawLen : baseLenStory;
                 }
 
-                // length
-                if (hasLenOverride) {
-                  effLen = s.lengthPreset;
-                } else if (touched && lastLen) {
-                  effLen = lastLen;
-                } else {
-                  effLen = globalLen;
-                }
+                const showBadge =
+                  hasTempOverride || hasLenOverride || richParas.length > 0 || touched;
+
+                const badgeLabel =
+                  hasTempOverride || hasLenOverride || richParas.length > 0
+                    ? "overridden"
+                    : "recent regen";
 
                 return (
                   <li key={id} className={styles.infoRow}>
@@ -1352,27 +1410,23 @@ function InfoTab({
                         {s.title || `Section ${idx + 1}`}
                       </button>
 
-                      {(hasTempOverride || hasLenOverride || touched) && (
-                        <span className={styles.noteInfo}>
-                          {hasTempOverride || hasLenOverride ? "overridden" : "recent regen"}
-                        </span>
+                      {showBadge && (
+                        <span className={styles.noteInfo}>{badgeLabel}</span>
                       )}
 
-                      {s.description && <div className={styles.secDesc}>{s.description}</div>}
+                      {s.description && (
+                        <div className={styles.secDesc}>{s.description}</div>
+                      )}
                     </div>
 
                     <div className={styles.kvs}>
                       <span>Creativity:</span>
-                      <b>
-                        {Math.round((effTemp || 0) * 100)}%
-                      </b>
+                      <b>{Math.round((effTemp || 0) * 100)}%</b>
                     </div>
 
                     <div className={styles.kvs}>
                       <span>Length:</span>
-                      <b>
-                        {capFirst(String(effLen))}
-                      </b>
+                      <b>{capFirst(String(effLen))}</b>
                     </div>
                   </li>
                 );
@@ -1381,6 +1435,7 @@ function InfoTab({
           )}
         </div>
       )}
+
 
     </div>
   );
@@ -1548,37 +1603,46 @@ function capFirst(s) {
   return String(s || "").replace(/^\w/, (m) => m.toUpperCase());
 }
 function getLengthPreset(meta) {
-  const p = meta?.upstreamParams?.lengthPreset;
-  if (p) return p;
-  const words = Number(meta?.lengthPerSection);
-  if (isFinite(words)) {
-    if (words <= 120) return "short";
-    if (words >= 200) return "long";
+    const up = meta?.upstreamParams || {};
+    const st = meta?.storytellerParams || meta?.storyteller_params || {};
+  
+    // 1) VM / upstream / meta.lengthPreset
+    if (st.length_preset) return String(st.length_preset);
+    if (st.lengthPreset) return String(st.lengthPreset);
+    if (up.lengthPreset) return String(up.lengthPreset);
+    if (meta?.lengthPreset) return String(meta.lengthPreset);
+  
+    // 2) fallback da numero di parole, se presente
+    const words = Number(meta?.lengthPerSection);
+    if (Number.isFinite(words)) {
+      if (words <= 120) return "short";
+      if (words >= 200) return "long";
+      return "medium";
+    }
+  
+    // 3) default
     return "medium";
   }
-  return "medium";
-}
+  
 function getCreativity(meta) {
-  // 1) prima di tutto: quello della VM
-  const vm = realKnobsFromVM(meta);
-  if (typeof vm.temp === "number") {
-    return quantizeTemp01(vm.temp); // es. 0.0 -> 0%
+    // 1) prima di tutto: quello della VM
+    const vm = realKnobsFromVM(meta);
+    if (typeof vm.temp === "number") {
+      return quantizeTemp01(vm.temp); // es. 0.0 -> 0%
+    }
+  
+    // 2) poi quello che hai salvato tu quando l’utente ha rigenerato la STORIA
+    if (meta?.upstreamParams?.temp != null)
+      return quantizeTemp01(meta.upstreamParams.temp);
+  
+    // 3) vecchio formato "creativity: 30"
+    if (typeof meta?.creativity === "number")
+      return quantizeTemp01(Number(meta.creativity) / 100);
+  
+    // ❌ NON guardiamo più currentAggregates per il “knob di base”
+    return 0.0;
   }
-
-  // 2) poi quello che hai salvato tu quando l’utente ha rigenerato
-  if (meta?.upstreamParams?.temp != null)
-    return quantizeTemp01(meta.upstreamParams.temp);
-
-  // 3) vecchio formato "creativity: 30"
-  if (typeof meta?.creativity === "number")
-    return quantizeTemp01(Number(meta.creativity) / 100);
-
-  // 4) aggregati calcolati lato FE
-  if (typeof meta?.currentAggregates?.avgTemp === "number")
-    return quantizeTemp01(meta.currentAggregates.avgTemp);
-
-  return 0.0;
-}
+  
 function defaultKnobsFromMeta(meta, sectionCount = null) {
   const vm = realKnobsFromVM(meta);         // 👈 valori veri VM
   const up = meta?.upstreamParams || {};

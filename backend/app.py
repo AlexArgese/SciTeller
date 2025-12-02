@@ -11,12 +11,14 @@ from dotenv import load_dotenv
 import requests
 import numpy as np
 from sentence_transformers import SentenceTransformer, util
+from fastapi.concurrency import run_in_threadpool
 
 # === NEW: progress broker / SSE / misc ===
 import asyncio, uuid
 from fastapi import Request, Query
 from fastapi.responses import StreamingResponse
-
+import logging
+logger = logging.getLogger("uvicorn.error")
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")  
 
 load_dotenv()
@@ -265,13 +267,17 @@ def new_job():
 
 @app.get("/api/explain/logs", tags=["Explain"])
 async def explain_logs(jobId: str = Query(..., alias="jobId")):
-    # SSE stream
     headers = {
         "Cache-Control": "no-cache",
         "Connection": "keep-alive",
-        "Content-Type": "text/event-stream",
+        "X-Accel-Buffering": "no",   # 👈 DISATTIVA il buffering Nginx
     }
-    return StreamingResponse(_sse_stream(jobId), headers=headers)
+    return StreamingResponse(
+        _sse_stream(jobId),
+        media_type="text/event-stream",
+        headers=headers,
+    )
+
 
 @app.post("/api/explain/progress", tags=["Explain"])
 async def vm_progress(
@@ -633,14 +639,19 @@ async def explain_endpoint(
         tmp.write(pdf_bytes) 
         pdf_path = tmp.name
 
-    # 2) Docparse → markdown
+    # 2) Docparse → markdown (in thread separato, per non bloccare SSE)
     out_dir = tempfile.mkdtemp(prefix="docparse_")
     cmd = [DOCPARSE_BIN, "default", "--file-path", pdf_path, "--output-dir", out_dir, "--output-format", "md"]
-    try:
+
+    def _run_docparse():
         print("[/api/explain] start docparse")
-        subprocess.run(cmd, check=True, capture_output=True, text=True)
+        return subprocess.run(cmd, check=True, capture_output=True, text=True)
+
+    try:
+        await run_in_threadpool(_run_docparse)
     except subprocess.CalledProcessError as e:
         raise HTTPException(500, f"docparse error: {e.stderr or e.stdout or str(e)}")
+
 
     md_files = [f for f in os.listdir(out_dir) if f.endswith(".md")]
     if not md_files:
@@ -650,6 +661,12 @@ async def explain_endpoint(
     if not text.strip():
         raise HTTPException(500, "Empty markdown from docparse")
     print(f"[/api/explain] docparse ok, md_len={len(text)} — start two-stage VM")
+    # parsing finito → notifica i client SSE
+    try:
+        _emit(job_id, {"type": "parsing_done"})
+    except Exception:
+        pass
+
 
     # 3) Chiamata VM: orchestratore 2 stadi
     if not REMOTE_GPU_URL:
@@ -688,9 +705,51 @@ async def explain_endpoint(
         cb = f"{PUBLIC_BASE_URL}/api/explain/progress?jobId={job_id}"
         payload["callback_url"] = cb
 
-    data = _gpu("/api/two_stage_story", payload, timeout=3000)
-    try: _emit(job_id, {"type": "all_done"})
-    except: pass
+    # 3) Chiamata VM: orchestratore 2 stadi, con soft-queue su 503 (GPU busy)
+    if not REMOTE_GPU_URL:
+        raise HTTPException(503, "GPU remoto non configurato (REMOTE_GPU_URL).")
+
+    try:
+        _emit(job_id, {"type": "generation_start"})
+    except Exception:
+        pass
+
+    import time
+    MAX_RETRIES = 100
+    RETRY_DELAY_S = 5
+
+    last_err = None
+
+    def _gpu_call():
+        return _gpu("/api/two_stage_story", payload, timeout=3000)
+
+    for _ in range(MAX_RETRIES):
+        try:
+            data = await run_in_threadpool(_gpu_call)
+            break
+        except HTTPException as e:
+            # se la VM dice 503 → GPU occupata → notifica coda e ritenta
+            if e.status_code == 503:
+                last_err = e
+                try:
+                    _emit(job_id, {
+                        "type": "queue",
+                        "detail": str(e.detail or "GPU busy"),
+                    })
+                except Exception:
+                    pass
+                time.sleep(RETRY_DELAY_S)
+                continue
+            # altri errori → rilancia
+            raise
+    else:
+        # siamo usciti dal for senza break (troppi retry)
+        raise HTTPException(503, f"GPU busy (max retries reached): {last_err}")
+
+    try:
+        _emit(job_id, {"type": "all_done"})
+    except Exception:
+        pass
 
     for s in data.get("sections", []):
         if "narrative" not in s and "text" in s:
@@ -942,6 +1001,10 @@ def regen_vm(req: RegenVmRequest):
     response_model=RegenSectionsVmResp,
 )
 def regen_sections_vm(req: RegenSectionsVmReq):
+    logger.info(
+        "[/api/regen_sections_vm] CALLED persona=%r title=%r temp=%r length_preset=%r targets=%r",
+        req.persona, req.title, req.temp, req.length_preset, req.targets,
+    )
     if not REMOTE_GPU_URL:
         raise HTTPException(503, "GPU remoto non configurato (REMOTE_GPU_URL).")
 
@@ -952,8 +1015,11 @@ def regen_sections_vm(req: RegenSectionsVmReq):
     targets  = set(int(i) for i in (req.targets or []) if isinstance(i, int))
 
     lp = resolve_length_params(req.length_preset or "medium", words=None)
+    raw_temp = float(req.temp or 0.0)
+    if raw_temp > 1.2:
+        raw_temp = raw_temp / 100.0
 
-    print(f"[/api/regen_sections_vm] length_preset IN = {req.length_preset!r} → resolved {lp}")
+    print(f"[/api/regen_sections_vm] length_preset IN = {req.length_preset!r} → resolved {lp}, temp_in={req.temp}, temp_norm={raw_temp}")
 
     # 1) Costruisci l'outline completo (title + description)
     def _desc_from(sec: dict) -> str:
@@ -985,7 +1051,7 @@ def regen_sections_vm(req: RegenSectionsVmReq):
         "targets": sorted(list(targets)),
         "storyteller": {
             "preset": lp["preset"],
-            "temperature": float(req.temp or 0.0),
+            "temperature": raw_temp, 
             "top_p": float(req.top_p or 0.9),
             "max_new_tokens": lp["max_new_tokens"],
             "min_new_tokens": lp["min_new_tokens"],
@@ -1223,9 +1289,7 @@ def locate_section(body: dict = Body(...)):
     best_score = float(scores[best_idx])
     print("[DEBUG locate] span[best_idx] meta:", spans[best_idx])
 
-    # ⚖️ Soglia dinamica (non un numero a caso):
-    #  - base_floor = 0.35 (sotto è troppo rumore)
-    #  - margine relativo: ammettiamo match entro 0.15 dal best
+
     base_floor = 0.70
     rel_margin = 0.15
     threshold = max(base_floor, best_score - rel_margin)

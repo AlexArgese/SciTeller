@@ -6,11 +6,54 @@ import { and, desc, eq } from 'drizzle-orm';
 
 const { stories, storyRevisions } = Schema;
 
-// 👇 stessa funzione che abbiamo messo nell’altra route
+// stessi helper logici di /api/stories/[id]/route.js
+function resolveBaseKnobs(meta = {}) {
+  const up = meta.upstreamParams || {};
+  const st = meta.storytellerParams || meta.storyteller_params || {};
+
+  // ---- lengthPreset ----
+  let baseLen =
+    st.length_preset ||
+    st.lengthPreset ||
+    up.lengthPreset ||
+    meta.lengthPreset ||
+    null;
+
+  if (!baseLen) {
+    const words = Number(meta.lengthPerSection);
+    if (Number.isFinite(words)) {
+      if (words <= 120) baseLen = "short";
+      else if (words >= 200) baseLen = "long";
+      else baseLen = "medium";
+    } else {
+      baseLen = "medium";
+    }
+  }
+
+  // ---- temp (0–1) ----
+  let baseTemp =
+    typeof st.temperature === "number" ? st.temperature : null;
+
+  if (baseTemp == null && typeof up.temp === "number") {
+    baseTemp = up.temp;
+  }
+  if (baseTemp == null && typeof meta.creativity === "number") {
+    // vecchio formato: 30 → 0.3
+    baseTemp = meta.creativity / 100;
+  }
+  if (
+    baseTemp == null &&
+    typeof meta.currentAggregates?.avgTemp === "number"
+  ) {
+    baseTemp = meta.currentAggregates.avgTemp;
+  }
+  if (!Number.isFinite(baseTemp)) baseTemp = 0;
+
+  return { baseLen, baseTemp };
+}
+
 function computeAggregatesFromSections(sections, meta = {}) {
-  const up = meta?.upstreamParams || {};
-  const baseLen = up.lengthPreset || "medium";
-  const baseTemp = typeof up.temp === "number" ? up.temp : 0;
+  const { baseLen, baseTemp } = resolveBaseKnobs(meta);
 
   if (!Array.isArray(sections) || sections.length === 0) {
     return {
@@ -20,14 +63,19 @@ function computeAggregatesFromSections(sections, meta = {}) {
     };
   }
 
-  const effLens = sections.map(s => (s?.lengthPreset ? s.lengthPreset.toLowerCase() : baseLen.toLowerCase()));
-  const allSame = effLens.every(l => l === effLens[0]);
+  // lunghezze effettive per ogni sezione: override > base
+  const effLens = sections.map((s) =>
+    String(s?.lengthPreset || baseLen || "medium").toLowerCase()
+  );
+  const allSame = effLens.every((l) => l === effLens[0]);
   const lengthLabel = allSame ? effLens[0] : "mix";
 
-  const temps = sections.map(s =>
+  // creatività effettiva per ogni sezione: override > base
+  const temps = sections.map((s) =>
     typeof s?.temp === "number" ? s.temp : baseTemp
   );
-  const avgTemp = temps.reduce((a,b)=>a+b,0) / temps.length;
+  const avgTemp =
+    temps.reduce((a, b) => a + b, 0) / temps.length;
 
   return {
     lengthLabel,
@@ -49,20 +97,14 @@ export async function GET(_req, { params }) {
   if (!s) return NextResponse.json({ error: 'not found' }, { status: 404 });
 
   const rows = await db.select().from(storyRevisions)
-    .where(eq(storyRevisions.storyId, s.id))
-    .orderBy(desc(storyRevisions.createdAt));
+  .where(eq(storyRevisions.storyId, s.id))
+  .orderBy(desc(storyRevisions.createdAt));
 
-  // minimal shape for UI timeline
-  const versions = rows.map(r => {
-    const meta = r.meta || {};
-
-    // 👇 se l’aggregato NON c’è, lo proviamo a ricostruire
-    let currentAggregates = meta.currentAggregates || meta.aggregates || null;
-
-    if (!currentAggregates) {
-      // le sections in questa route molto spesso NON ci sono,
-      // ma proviamo a leggerle da content, se è JSON
+  const versions = rows
+    .map(r => {
+      const meta = r.meta || {};
       let sections = [];
+
       if (r.content) {
         let c = r.content;
         if (typeof c === "string") {
@@ -71,21 +113,32 @@ export async function GET(_req, { params }) {
         if (c && Array.isArray(c.sections)) {
           sections = c.sections;
         }
+      } else if (Array.isArray(r.sections)) {
+        sections = r.sections;
       }
-      currentAggregates = computeAggregatesFromSections(sections, meta);
-    }
 
-    return {
-      id: r.id,
-      createdAt: r.createdAt,
-      persona: r.persona,
-      meta: {
-        ...meta,
-        currentAggregates,              // 👈 aggiunto
-      },
-      notes: meta?.notes || null,
-    };
-  });
+      // 👇 SCARTA le revisioni completamente vuote
+      if (!sections || sections.length === 0) {
+        return null;
+      }
+
+      let currentAggregates = meta.currentAggregates ?? null;
+      if (!currentAggregates || typeof currentAggregates !== "object") {
+        currentAggregates = computeAggregatesFromSections(sections, meta);
+      }
+
+      return {
+        id: r.id,
+        createdAt: r.createdAt,
+        persona: r.persona,
+        meta: {
+          ...meta,
+          currentAggregates,
+        },
+        notes: meta?.notes || null,
+      };
+    })
+    .filter(Boolean);   // 👈 rimuove i null
 
   return NextResponse.json(versions);
 }

@@ -47,7 +47,6 @@ function ResearchersEngineersIcon(props){
 // ===== Messaggi di stato lettura/generazione =====
 const TICK_MS = 2600;
 const PHASE_CHANGE_FREEZE_MS = 3200;
-const EXTRACT_TO_STORY_GUARD_MS = 7000;
 
 const UploadIcon = ({ size = 22 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden>
@@ -134,13 +133,13 @@ export default function Home() {
   const navigate = useNavigate();
   const [fileObj, setFileObj] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [pdfLinkErrorVisible, setPdfLinkErrorVisible] = useState(false);
 
   // ===== PHASED STATUS =====
   const [phase, setPhase] = useState("idle");
   const [tickIndex, setTickIndex] = useState(0);
   const sseRef = useRef(null);
   const freezeRef = useRef(false);
-  const guardTimerRef = useRef(null);
   const tickerTimerRef = useRef(null);
 
   const extractMsgs = useMemo(
@@ -189,66 +188,64 @@ export default function Home() {
   const RE_START_STORY = /(start\s*story|two-?stage\s*(vm|story)|start\s*generation)/i;
 
   const handleBackendLog = (data) => {
-    // data è JSON stringa dall'SSE
+    console.log("[SSE] raw data:", data);
+  
     let evt;
-    try { evt = typeof data === "string" ? JSON.parse(data) : data; } catch { return; }
+    try {
+      evt = typeof data === "string" ? JSON.parse(data) : data;
+    } catch {
+      evt = null;
+    }
     const t = evt?.type;
-
+  
     if (t === "parsing_start") {
       setPhase("extract");
       return;
     }
+  
     if (t === "parsing_done") {
-      // resta in extract finché non parte la story (guard già presente)
       return;
     }
+  
     if (t === "generation_start") {
       setPhase("story");
+      setInQueue(false);
       return;
     }
+  
     if (t === "outline_ready" && Array.isArray(evt.titles)) {
       setOutlineTitles(evt.titles);
       setCurrentSection(-1);
-      // se non sei già in "story", passaci
-      setPhase((p) => (p === "extract" ? "story" : p));
+      setPhase("story");
       return;
     }
+  
     if (t === "section_start") {
-      // { index, total, title }
-      if (typeof evt.index === "number") {
-        setCurrentSection(evt.index);
-      }
-      // messaggio dinamico nel ticker:
-      if (evt.title) {
-        // forza il messaggio attivo in Loading col titolo (lo passa via props)
-      }
-      if (phase === "story") {
-        if (queueTimerRef.current) {
-          clearTimeout(queueTimerRef.current);
-          queueTimerRef.current = null;
-        }
-        setInQueue(false);
-      }
-      const t = evt?.type;
+      if (typeof evt.index === "number") setCurrentSection(evt.index);
+      setPhase("story");
+      setInQueue(false);
       return;
     }
-    if (t === "section_done") {
-      // opzionale: potresti marcare completata la sezione evt.index
+  
+    if (t === "queue") {
+      setInQueue(true);
       return;
     }
+  
     if (t === "all_done") {
-      // la navigazione viene già fatta quando la POST /api/explain finisce
+      try { sseRef.current?.close?.(); } catch {}
       return;
     }
-
-    // fallback: vecchi log in plain text
+  
+    // fallback regex vecchi log
     const L = String(data || "");
     if (RE_START_DOCPARSE.test(L)) {
-      if (phase !== "extract") setPhase("extract");
+      setPhase("extract");
     } else if (RE_START_STORY.test(L)) {
-      if (phase !== "story") setPhase("story");
+      setPhase("story");
     }
   };
+  
 
 
   const attachExplainLogsSSE = (jobId) => {
@@ -265,24 +262,10 @@ export default function Home() {
 
 
   useEffect(() => {
-    if (guardTimerRef.current) {
-      clearTimeout(guardTimerRef.current);
-      guardTimerRef.current = null;
-    }
-    if (isLoading && phase === "extract") {
-      guardTimerRef.current = setTimeout(() => {
-        setPhase((p) => (p === "extract" ? "story" : p));
-      }, EXTRACT_TO_STORY_GUARD_MS);
-    }
-    return () => { if (guardTimerRef.current) clearTimeout(guardTimerRef.current); };
-  }, [isLoading, phase]);
-
-  useEffect(() => {
     document.body.setAttribute("data-route", "home");
     return () => {
       document.body.removeAttribute("data-route");
       try { sseRef.current?.close?.(); } catch {}
-      if (guardTimerRef.current) clearTimeout(guardTimerRef.current);
       if (tickerTimerRef.current) clearInterval(tickerTimerRef.current);
     };
   }, []);
@@ -405,7 +388,15 @@ export default function Home() {
       }
     } catch (err) {
       console.error(err);
-      alert(err.message || "Error during generation");
+
+      if (link.trim()) {
+        // errore durante download da link → mostra overlay user-friendly
+        setPdfLinkErrorVisible(true);
+      } else {
+        // altri errori (upload locale, backend, ecc.)
+        alert(err.message || "Error during generation");
+      }
+
       setPhase("idle");
       setIsLoading(false);
     }
@@ -420,38 +411,6 @@ export default function Home() {
   const canGenerate = step1Done && step2Done;
 
   const [inQueue, setInQueue] = useState(false);
-  const queueTimerRef = useRef(null);
-
-  useEffect(() => {
-    // se non sto caricando → niente coda
-    if (!isLoading) {
-      setInQueue(false);
-      if (queueTimerRef.current) clearTimeout(queueTimerRef.current);
-      queueTimerRef.current = null;
-      return;
-    }
-
-    // la queue ha senso solo durante la fase "story" (VM)
-    if (phase !== "story") {
-      setInQueue(false);
-      if (queueTimerRef.current) clearTimeout(queueTimerRef.current);
-      queueTimerRef.current = null;
-      return;
-    }
-
-    // sto entrando in fase story → preparo il timer queue
-    setInQueue(false);
-    if (queueTimerRef.current) clearTimeout(queueTimerRef.current);
-
-    queueTimerRef.current = setTimeout(() => {
-      setInQueue(true);
-    }, 5000); // 5 secondi di “silenzio” = probabilmente in coda
-
-    return () => {
-      if (queueTimerRef.current) clearTimeout(queueTimerRef.current);
-      queueTimerRef.current = null;
-    };
-  }, [isLoading, phase]);
 
 
   if (isLoading) {
@@ -482,117 +441,138 @@ export default function Home() {
   }
 
   return (
-    <main className="container">
-      <section className={styles.panel}>
-        <div className={styles.hero}>
-          <h1>AI Scientist Storyteller</h1>
-          <p>
-            Upload a scientific paper and get a tailored narrative for your audience.
-            Pick a persona, set the context, and generate a clear, engaging story.
-          </p>
+    <>
+      {pdfLinkErrorVisible && (
+        <div className={styles.overlayBackdrop}>
+          <div className={styles.overlayBox}>
+            <div className={styles.overlayTitle}>PDF download failed</div>
+            <div className={styles.overlayText}>
+              This PDF cannot be downloaded from this link.<br />
+              Please download the PDF and upload it manually<br />
+              or try again with another link.
+            </div>
+            <button
+              className={styles.overlayBtn}
+              onClick={() => setPdfLinkErrorVisible(false)}
+            >
+              OK
+            </button>
+          </div>
         </div>
+      )}
+  
+      <main className="container">
+        <section className={styles.panel}>
+          <div className={styles.hero}>
+            <h1>AI Scientist Storyteller</h1>
+            <p>
+              Upload a scientific paper and get a tailored narrative for your audience.
+              Pick a persona, set the context, and generate a clear, engaging story.
+            </p>
+          </div>
 
-        {/* STEP 1 - Upload / Link */}
-        <div className={styles.step}>
-          <div className={`${styles.ball} ${styles.chip} ${step1Done ? styles.ballDone : ""}`}>1</div>
-          <div className={styles.body}>
-            <div className={styles.row}>
-              <div
-                ref={dropRef}
-                className={`${styles.input} ${styles.glass}`}
-                role="button"
-                tabIndex={0}
-                aria-label="Upload a PDF via drag and drop or file picker"
-                onClick={() => fileRef.current?.click()}
-                onKeyDown={(e) => { if (e.key === "Enter") fileRef.current?.click(); }}
-                style={isDragging ? { outline: "2px solid rgba(99, 102, 241, .4)" } : undefined}
-              >
-                <UploadIcon />
-                <input
-                  ref={fileRef}
-                  type="file"
-                  accept="application/pdf"
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    if (f) {
-                      setPdfName(f.name);
-                      setFileObj(f);
-                    }
+          {/* STEP 1 - Upload / Link */}
+          <div className={styles.step}>
+            <div className={`${styles.ball} ${styles.chip} ${step1Done ? styles.ballDone : ""}`}>1</div>
+            <div className={styles.body}>
+              <div className={styles.row}>
+                <div
+                  ref={dropRef}
+                  className={`${styles.input} ${styles.glass}`}
+                  role="button"
+                  tabIndex={0}
+                  aria-label="Upload a PDF via drag and drop or file picker"
+                  onClick={() => fileRef.current?.click()}
+                  onKeyDown={(e) => { if (e.key === "Enter") fileRef.current?.click(); }}
+                  style={isDragging ? { outline: "2px solid rgba(99, 102, 241, .4)" } : undefined}
+                >
+                  <UploadIcon />
+                  <input
+                    ref={fileRef}
+                    type="file"
+                    accept="application/pdf"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) {
+                        setPdfName(f.name);
+                        setFileObj(f);
+                      }
+                    }}
+                    style={{ display: "none" }}
+                  />
+                  <button className={styles.ghost} aria-label="Choose a PDF">
+                    {pdfName || (isDragging ? "Drop your PDF here" : "Drop a PDF or click to choose")}
+                  </button>
+                </div>
+
+                <div className={styles.or}>or</div>
+
+                <div className={`${styles.glass} ${styles.grow}`}>
+                  <input
+                    className={styles.text}
+                    type="url"
+                    inputMode="url"
+                    placeholder="Paste the link"
+                    value={link}
+                    onChange={(e) => setLink(e.target.value)}
+                    aria-label="Paste a PDF or arXiv link"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* STEP 2 - Persona */}
+          <div className={styles.step}>
+            <div className={` ${styles.chip} ${step2Done ? styles.ballDone : styles.ball}`}>2</div>
+            <div className={`${styles.body} ${styles.step2}`}>
+              <div className={`${styles.select} ${styles.glass}`}>
+                <div style={{ display: "inline-flex", alignItems: "center", gap: 8, marginRight: 10 }}>
+                  {PersonaCurrentIcon ? <PersonaCurrentIcon /> : <span aria-hidden="true" style={{ width:20,height:20,display:"inline-block" }} />}
+                </div>
+                <select
+                  value={persona}
+                  onChange={(e) => setPersona(e.target.value)}
+                  className={styles.selectEl}
+                  aria-label="Choose persona"
+                >
+                  <option value="">Choose Persona...</option>
+                  {PERSONAS.map((p) => (
+                    <option key={p} value={p}>{p}</option>
+                  ))}
+                </select>
+                <ChevronDown />
+              </div>
+
+              <div className={styles.caption}>
+                {persona
+                  ? <>Tone: {personaTone}, Context: {personaContext}</>
+                  : <>Select a persona to adapt tone and context.</>}
+              </div>
+            </div>
+          </div>
+
+          {/* STEP 3 - CTA */}
+          <div className={styles.step}>
+            <div className={`${styles.ball} ${styles.chip} ${canGenerate ? styles.ballDone : ""}`}>3</div>
+            <div className={styles.body}>
+              <div className={styles.center}>
+                <button
+                  className={styles.cta}
+                  disabled={!canGenerate}
+                  onClick={handleGenerate}
+                  style={{
+                    opacity: canGenerate ? 1 : 0.4,
+                    cursor: canGenerate ? "pointer" : "not-allowed",
                   }}
-                  style={{ display: "none" }}
-                />
-                <button className={styles.ghost} aria-label="Choose a PDF">
-                  {pdfName || (isDragging ? "Drop your PDF here" : "Drop a PDF or click to choose")}
+                >
+                  GENERATE STORY
                 </button>
               </div>
-
-              <div className={styles.or}>or</div>
-
-              <div className={`${styles.glass} ${styles.grow}`}>
-                <input
-                  className={styles.text}
-                  type="url"
-                  inputMode="url"
-                  placeholder="Paste the link"
-                  value={link}
-                  onChange={(e) => setLink(e.target.value)}
-                  aria-label="Paste a PDF or arXiv link"
-                />
-              </div>
             </div>
           </div>
-        </div>
-
-        {/* STEP 2 - Persona */}
-        <div className={styles.step}>
-          <div className={` ${styles.chip} ${step2Done ? styles.ballDone : styles.ball}`}>2</div>
-          <div className={`${styles.body} ${styles.step2}`}>
-            <div className={`${styles.select} ${styles.glass}`}>
-              <div style={{ display: "inline-flex", alignItems: "center", gap: 8, marginRight: 10 }}>
-                {PersonaCurrentIcon ? <PersonaCurrentIcon /> : <span aria-hidden="true" style={{ width:20,height:20,display:"inline-block" }} />}
-              </div>
-              <select
-                value={persona}
-                onChange={(e) => setPersona(e.target.value)}
-                className={styles.selectEl}
-                aria-label="Choose persona"
-              >
-                <option value="">Choose Persona...</option>
-                {PERSONAS.map((p) => (
-                  <option key={p} value={p}>{p}</option>
-                ))}
-              </select>
-              <ChevronDown />
-            </div>
-
-            <div className={styles.caption}>
-              {persona
-                ? <>Tone: {personaTone}, Context: {personaContext}</>
-                : <>Select a persona to adapt tone and context.</>}
-            </div>
-          </div>
-        </div>
-
-        {/* STEP 3 - CTA */}
-        <div className={styles.step}>
-          <div className={`${styles.ball} ${styles.chip} ${canGenerate ? styles.ballDone : ""}`}>3</div>
-          <div className={styles.body}>
-            <div className={styles.center}>
-              <button
-                className={styles.cta}
-                disabled={!canGenerate}
-                onClick={handleGenerate}
-                style={{
-                  opacity: canGenerate ? 1 : 0.4,
-                  cursor: canGenerate ? "pointer" : "not-allowed",
-                }}
-              >
-                GENERATE STORY
-              </button>
-            </div>
-          </div>
-        </div>
-      </section>
-    </main>
+        </section>
+      </main>
+    </>
   );
 }
