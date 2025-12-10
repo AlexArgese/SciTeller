@@ -1,9 +1,8 @@
-
 /* =========================
    Reader — PDF + Story split
    ========================= */
 
-/* Grid principale (2 colonne) */
+/* Layout principale (2 colonne) */
 .page {
   display: flex;
   flex-direction: row;
@@ -11,15 +10,14 @@
   width: min(1600px, 96vw);
   margin: 12vh auto 50vh auto;
   padding-inline: var(--sp-3);
-  align-items: center;
-
+  align-items: flex-start;
 }
 
 /* wrapper colonna sinistra (PDF) */
 .left {
   position: sticky;
   top: var(--sp-3);
-  align-self: start;
+  align-self: flex-start;
   width: 70%;
 }
 
@@ -58,7 +56,7 @@
 .pdfTag {
   font-size: var(--fs-small);
   color: var(--text-2);
-  opacity: .8;
+  opacity: 0.8;
 }
 
 /* contenitore del PdfViewer per arrotondare canvas/iframe */
@@ -66,10 +64,10 @@
   margin-top: var(--sp-2);
   border-radius: var(--r-md);
   overflow: hidden;
-  box-shadow: 0 1px 2px rgba(0,0,0,.06);
+  box-shadow: var(--shadow-1);
 }
 
-/* garantisce sfondo neutro dietro al PDF */
+/* garantisce sfondo neutro dietro al PDF (pagina bianca) */
 .viewerBody :global(canvas),
 .viewerBody :global(iframe) {
   display: block;
@@ -80,7 +78,7 @@
 .right {
   position: sticky;
   top: var(--sp-3);
-  align-self: start;
+  align-self: flex-start;
   width: 30%;
   margin-bottom: calc(var(--footer-h) + 30px);
 }
@@ -106,7 +104,7 @@
 .storyKicker {
   font-size: var(--fs-small);
   color: var(--text-2);
-  opacity: .85;
+  opacity: 0.85;
 }
 
 /* titolo storia/doc */
@@ -118,7 +116,7 @@
 /* stato di caricamento */
 .loading {
   color: var(--text-2);
-  opacity: .85;
+  opacity: 0.85;
 }
 
 /* stato: mancano i dati di navigazione */
@@ -129,21 +127,31 @@
 }
 
 .missingCard {
-  background: color-mix(in oklab, #ff0000 6%, var(--panel));
-  border: 1px solid color-mix(in oklab, #a40000 35%, var(--line-0));
-  color: color-mix(in oklab, #a40000 70%, var(--text));
+  background: color-mix(in oklab, var(--danger) 16%, var(--panel));
+  border: 1px solid color-mix(in oklab, var(--danger) 40%, var(--line-0));
+  color: color-mix(in oklab, var(--danger) 70%, var(--text));
   border-radius: var(--r-lg);
   padding: var(--sp-4);
 }
 
 /* bottone back anche nella view “missing” */
 .missingBack {
+  composes: btn btn-primary from global;
   background: var(--glass-blue-bg);
+  color: #fff;
+  font-weight: 700;
+  box-shadow: var(--glass-blue-sd);
+  height: 36px;
+  padding: 0 var(--sp-3);
+  border-radius: 999px;
+  line-height: 36px;
   margin-bottom: var(--sp-3);
 }
 
 /* Utility: nascondi elementi quando serve */
-.hidden { display: none !important; }
+.hidden {
+  display: none !important;
+}
 
 /* =========================
    Responsive
@@ -151,15 +159,18 @@
 
 @media (max-width: 1200px) {
   .page {
-    grid-template-columns: 1fr;
-    gap: var(--sp-3);
+    flex-direction: column;
+    gap: var(--sp-6);
+    margin-top: var(--sp-6);
   }
-  .left {
-    top: 0;
+
+  .left,
+  .right {
+    position: static;
+    width: 100%;
+    margin-bottom: 0;
   }
-  .viewerCard {
-    border-radius: var(--r-lg);
-  }
+
   .storyCard {
     margin-top: 0;
   }
@@ -176,8 +187,6 @@
     scroll-behavior: auto !important;
   }
 }
-
-
 
 /* =========================
    Integrazioni specifiche

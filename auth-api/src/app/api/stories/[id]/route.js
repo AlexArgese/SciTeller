@@ -323,15 +323,19 @@ export async function PATCH(req, { params }) {
 
     // 5) CONTENT: se non arriva, costruiscilo dalle sections; se nemmeno quelle, mantieni il precedente
     const buildContent = (secs) =>
-    Array.isArray(secs)
-      ? secs.map((sec) => {
-          const h = sec?.title ? `# ${String(sec.title).trim()}\n\n` : "";
-          const raw = typeof sec?.text === "string"
-            ? sec.text
-            : (typeof sec?.narrative === "string" ? sec.narrative : "");
-          return (h + (raw || "")).trim();
-        }).filter(Boolean).join("\n\n")
-      : "";
+      Array.isArray(secs)
+        ? secs.map((sec) => {
+            const h = sec?.title ? `# ${String(sec.title).trim()}\n\n` : "";
+            const raw = Array.isArray(sec.paragraphs)
+              ? sec.paragraphs.join("\n\n")
+              : (sec.text || sec.narrative || "");
+
+            return (h + raw).trim();
+          })
+          .filter(Boolean)
+          .join("\n\n")
+        : "";
+
 
     // 🔁 costruisci SEMPRE un oggetto JSONB con dentro sections (+ opzionale markdown)
     let nextContentObj;
@@ -422,10 +426,25 @@ export async function PATCH(req, { params }) {
   }
 }
 
+function splitTextIntoParagraphs(txt = "") {
+  const s = String(txt || "").replace(/\r\n/g, "\n").trim();
+  if (!s) return [];
+  // prima: righe vuote
+  let parts = s.split(/\n{2,}/).map(t => t.trim()).filter(Boolean);
+  if (parts.length <= 1) {
+    // fallback: frasi
+    parts = s
+      .split(/(?<=[.!?])\s+(?=[A-ZÀ-ÖØ-Ý])/)
+      .map(t => t.trim())
+      .filter(Boolean);
+  }
+  return parts;
+}
+
+
 function normalizeSectionsForClient(sections = []) {
   return (sections || []).map((sec, i) => {
-    // Normalizza paragraphs: oggetto -> stringa
-    const paras = Array.isArray(sec.paragraphs)
+    let paras = Array.isArray(sec.paragraphs)
       ? sec.paragraphs
           .map((p) =>
             typeof p === "string" ? p : (p && p.text ? String(p.text) : "")
@@ -433,12 +452,18 @@ function normalizeSectionsForClient(sections = []) {
           .filter(Boolean)
       : [];
 
+    let text = sec.text || sec.narrative || "";
+
+    // 🔴 SE c'è 0 o 1 paragrafo ma il testo è lungo → rispezza
+    if ((paras.length === 0 || paras.length === 1) && text) {
+      const rebuilt = splitTextIntoParagraphs(text);
+      if (rebuilt.length > 1) {
+        paras = rebuilt;
+      }
+    }
+
     // Se text è [object Object] o vuoto, rigeneralo dai paragrafi
-    let text = sec.text;
-    if (
-      (!text || /\[object Object]/.test(String(text))) &&
-      paras.length > 0
-    ) {
+    if ((!text || /\[object Object]/.test(String(text))) && paras.length > 0) {
       text = paras.join("\n\n");
     }
 

@@ -542,3 +542,22 @@ export async function chooseParagraphVariant({ storyId, batchId, variantId, base
 
   return data;
 }
+
+export async function computeStoryScore(storyId) {
+  if (!storyId) throw new Error("computeStoryScore: missing storyId");
+
+  const res = await fetch(`/api/stories/${encodeURIComponent(storyId)}/storyscore`, {
+    method: "POST",
+    credentials: "include",
+    cache: "no-store",
+  });
+
+  const raw = await res.text().catch(() => "");
+  let data; try { data = raw ? JSON.parse(raw) : {}; } catch { data = { raw }; }
+
+  if (!res.ok) {
+    throw new Error(data?.error || data?.detail || `HTTP ${res.status}`);
+  }
+
+  return data;   // contiene storyscore, berts, ctx_recall, nohall, persona metrics, ecc.
+}

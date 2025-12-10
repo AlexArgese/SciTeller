@@ -4,16 +4,8 @@ import styles from "./Loading.module.css";
 import Lottie from "lottie-react";
 import animationData from "../assets/data.json";
 
-
 /**
- * Full-page Loading screen (identico nello stile alle altre pagine).
- * Props:
- * - title: string
- * - subtitle: string
- * - phase: "extract" | "story" | "generic"
- * - extractMsgs: string[]
- * - storyMsgs: string[]
- * - genericMsgs: string[]
+ * Full-page Loading screen.
  */
 export default function Loading({
   title = "AI Scientist Storyteller",
@@ -24,8 +16,10 @@ export default function Loading({
   genericMsgs = ["Loading…"],
   timeline = [],
   currentStep = -1,
-  inQueue = false
+  inQueue = false,
+  progress = 0,
 }) {
+  const pct = Math.round((progress || 0) * 100);
   const TICK_MS = 2600;
   const PHASE_CHANGE_FREEZE_MS = 3200;
 
@@ -41,12 +35,19 @@ export default function Loading({
   useEffect(() => {
     setTickIndex(0);
     setFreeze(true);
+
     const tFreeze = setTimeout(() => setFreeze(false), PHASE_CHANGE_FREEZE_MS);
     const tTicker = setInterval(() => {
-      if (freeze) return;
-      setTickIndex((i) => (i + 1) % activeMsgs.length);
+      setTickIndex((i) => {
+        if (freeze) return i;
+        return (i + 1) % activeMsgs.length;
+      });
     }, TICK_MS);
-    return () => { clearTimeout(tFreeze); clearInterval(tTicker); };
+
+    return () => {
+      clearTimeout(tFreeze);
+      clearInterval(tTicker);
+    };
   }, [phase, activeMsgs.length, freeze]);
 
   return (
@@ -59,14 +60,27 @@ export default function Loading({
 
         <div className={styles.body}>
           <div className={styles.center}>
-            <div className="loading-container">
-              <Lottie 
-                animationData={animationData} 
-                loop={true}   // loop infinito
-                autoplay={true}
-                style={{ width: 200, height: 200 }} 
+            <div className={styles.loadingContainer}>
+              <Lottie
+                animationData={animationData}
+                loop
+                autoplay
+                style={{ width: 200, height: 200 }}
               />
             </div>
+          </div>
+
+          {/* Progress bar orizzontale */}
+          <div className={styles.progressRow}>
+            <div className={styles.progressTrack}>
+              <div
+                className={styles.progressFill}
+                style={{ width: `${pct}%` }}
+              />
+            </div>
+            <span className={styles.progressLabel}>
+              {inQueue ? "In queue…" : `${pct}%`}
+            </span>
           </div>
 
           <div className={`${styles.ticker} ${styles.glass}`} aria-live="polite">
@@ -96,7 +110,7 @@ export default function Loading({
 
           {inQueue && (
             <div className={styles.queueNotice}>
-              The server is currently busy with other users.  
+              The server is currently busy with other users.
               <br />
               You are now in queue — your request will start automatically.
             </div>

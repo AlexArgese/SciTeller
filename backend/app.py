@@ -1,4 +1,4 @@
-# backend/app.py — FastAPI for AI Scientist Storyteller (Mac backend)
+# FILE: backend/app.py — FastAPI for AI Scientist Storyteller (Mac backend)
 # run: uvicorn app:app --reload --port 8000
 
 import os, tempfile, subprocess, json, sys, pathlib, re, hashlib
@@ -22,7 +22,7 @@ logger = logging.getLogger("uvicorn.error")
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")  
 
 load_dotenv()
-
+print(f"[CFG] PUBLIC_BASE_URL = {PUBLIC_BASE_URL!r}")
 # ===== Prompt builder (porting) =====
 KEEP_TYPES = {"text", "title"}
 DROP_TYPES = {"header", "table", "image", "list", "footer"}
@@ -129,6 +129,7 @@ def extract_text_spans_with_layout(md_text: str):
             })
 
     return spans
+
 
 def _clean_text_paragraph(txt: str) -> str:
     txt = re.sub(r"<!--.*?--\!?>", "", txt, flags=re.DOTALL).strip()
@@ -286,13 +287,75 @@ async def vm_progress(
     key: str | None = Query(None),
     body: dict = Body(...)
 ):
-    # Autorizzazione: header X-API-Key o query ?key=
+    print("[PROGRESS] jobId=", jobId, "body=", body)
     api_key_hdr = request.headers.get("X-API-Key")
-    if (api_key_hdr or key) != (REMOTE_API_KEY or ""):
-        raise HTTPException(403, "forbidden")
 
-    # Rilancia l'evento verso i client SSE
-    await _emit_async(jobId, body)
+    # ✅ Verifica SOLO se REMOTE_API_KEY è settata
+    if REMOTE_API_KEY:
+        if (api_key_hdr or key) != REMOTE_API_KEY:
+            raise HTTPException(403, "forbidden")
+
+    # === PATCH: normalize VM trace events to frontend-friendly messages ===
+    evt = body.get("event")
+
+    # ----- SPLITTER -----
+    if evt in ("splitter.start", "splitter.item.start", "splitter.generate.begin"):
+        ui = {
+            "type": "splitter_start",
+            "text": "Preparing outline from the paper…"
+        }
+
+
+    elif evt in ("splitter.generate.done", "splitter.output.saved", "splitter.done"):
+        ui = {
+            "type": "splitter_done",
+            "text": "Outline ready."
+        }
+
+    elif evt == "splitter.section.detected":
+        # la VM di solito manda qualcosa tipo first/title/section_title
+        ui = {
+            "type": "outline_section_start",
+            "title": body.get("first") or body.get("title") or body.get("section_title"),
+        }
+
+
+    # ----- STORYTELLER -----
+    elif evt in ("storyteller.start", "story.item.start", "story.model_loaded"):
+        ui = {
+            "type": "story_start",
+            "text": "Writing the story sections…"
+        }
+
+    elif evt in ("story.item.done", "story.output.saved", "story.session.done"):
+        ui = {
+            "type": "story_done",
+            "text": "Story generated."
+        }
+
+    elif evt == "story.section.start":
+        ui = {
+            "type": "story_section_start",
+            # se la VM ti passa un indice, usalo; altrimenti sarà None ma il FE semplicemente lo ignora
+            "index": body.get("index"),
+            "title": body.get("title") or body.get("section_title"),
+        }
+
+    elif evt == "story.section.done":
+        ui = {
+            "type": "story_section_done",
+            "index": body.get("index"),
+            "title": body.get("title") or body.get("section_title"),
+        }
+
+    else:
+        # fallback: manda tutto com'è, così non butti via info di debug
+        ui = body
+
+
+
+    await _emit_async(jobId, ui)
+
     return {"ok": True}
 
 # ========= Schemas =========
@@ -527,23 +590,64 @@ def _gpu(url_path: str, payload: dict, timeout: int = 3000):
         raise HTTPException(r.status_code, f"GPU service error: {r.text}")
     return r.json()
 
+def _split_into_paragraphs(text: str) -> list[str]:
+    """
+    Split "narrative/text" into clean paragraphs.
+
+    Regole:
+    - prima prova a usare le linee vuote (\n\n) come separatori
+    - se non trova niente (tutto un blocco unico), fa fallback su frasi
+      spezzando su . ! ? + spazio + Maiuscola
+      ma ricompone correttamente "frase + punteggiatura"
+    """
+    s = (text or "").replace("\r\n", "\n").strip()
+    if not s:
+        return []
+
+    # 1) prova con i doppi newline come separatori "forti"
+    parts = re.split(r"\n{2,}|\r?\n\s*\r?\n", s)
+    parts = [p.strip() for p in parts if p.strip()]
+
+    if len(parts) > 1:
+        return parts
+
+    # 2) fallback: split in FRASI, ma senza perdere la punteggiatura
+    chunks = re.split(r"([.!?])\s+(?=[A-ZÀ-ÖØ-Ý])", s)
+    paras: list[str] = []
+    buf = ""
+
+    for idx, chunk in enumerate(chunks):
+        if idx % 2 == 0:
+            # pezzo di testo
+            buf += chunk
+        else:
+            # è la punteggiatura .!?
+            buf += chunk
+            if buf.strip():
+                paras.append(buf.strip())
+            buf = ""
+
+    if buf.strip():
+        paras.append(buf.strip())
+
+    return [p for p in paras if p]
+
 
 def _normalize_sections(sections: list[dict]) -> list[dict]:
     out = []
     for i, s in enumerate(sections or []):
         text = s.get("narrative") or s.get("text") or ""
-        # split per paragrafi se non esistono già
+
+        # se la VM ha già messo paragraphs li teniamo; altrimenti li costruiamo noi
         paras = s.get("paragraphs")
         if not paras:
-            parts = [p.strip() for p in re.split(r"\n{2,}", text) if p.strip()]
-            if not parts:  # fallback: split su .?!
-                parts = re.split(r'(?<=[.!?])\s+(?=[A-ZÀ-ÖØ-Ý])', text)
-            paras = [p.strip() for p in parts if p.strip()]
+            paras = _split_into_paragraphs(text)
 
         out.append({
             **s,
             "id": s.get("id") or f"sec-{i}",
             "title": s.get("title") or f"Section {i+1}",
+            "text": text,
             "paragraphs": paras,
         })
     return out
@@ -580,6 +684,53 @@ async def _sse_stream(job_id: str):
         except Exception:
             payload = json.dumps({"type": "error", "detail": "bad_event"})
         yield f"event: message\ndata: {payload}\n\n"
+
+import time
+
+def _poll_vm_progress(job_id: str):
+  """
+  Gira in un thread separato:
+  - interroga la VM su /api/progress/{job_id}
+  - reinvia gli eventi sulla coda SSE locale (via _emit)
+  - si ferma quando vede un evento type == "all_done" o in caso di errore.
+  """
+  last_len = 0
+
+  # niente REMOTE_GPU_URL -> niente polling
+  if not REMOTE_GPU_URL:
+      return
+
+  url = f"{REMOTE_GPU_URL}/api/progress/{job_id}"
+
+  while True:
+      try:
+          r = requests.get(url, timeout=5)
+          if not r.ok:
+              break
+          data = r.json() or {}
+          events = data.get("events") or []
+          # prendi solo quelli nuovi
+          new_events = events[last_len:]
+          if not new_events:
+              # nessun evento nuovo, aspetta un attimo
+              time.sleep(1.0)
+              continue
+
+          for ev in new_events:
+              try:
+                  _emit(job_id, ev)
+              except Exception:
+                  pass
+
+          last_len = len(events)
+
+          # se uno dei nuovi è all_done → stop
+          if any(isinstance(ev, dict) and ev.get("type") == "all_done" for ev in new_events):
+              break
+
+          time.sleep(1.0)
+      except Exception:
+          break
 
 # ========= Routes =========
 @app.get(
@@ -701,9 +852,16 @@ async def explain_endpoint(
         }
     }
 
-    if PUBLIC_BASE_URL:
-        cb = f"{PUBLIC_BASE_URL}/api/explain/progress?jobId={job_id}"
-        payload["callback_url"] = cb
+    # Modalità PULL: progress_id per la VM
+    payload["progress_id"] = job_id
+
+    # avvia il poller in un thread separato (che interroga la VM)
+    try:
+        import threading
+        t = threading.Thread(target=_poll_vm_progress, args=(job_id,), daemon=True)
+        t.start()
+    except Exception:
+        pass
 
     # 3) Chiamata VM: orchestratore 2 stadi, con soft-queue su 503 (GPU busy)
     if not REMOTE_GPU_URL:
@@ -1069,17 +1227,14 @@ def regen_sections_vm(req: RegenSectionsVmReq):
     sparse = data.get("sections", {}) or {}
 
     def _norm_keep(sec: dict, i: int) -> dict:
-        # normalizza la sezione "kept" per avere sempre paragraphs coerenti
-        paras = sec.get("paragraphs") or []
-        if not paras and isinstance(sec.get("text"), str):
-            parts = [p.strip() for p in re.split(r"\n{2,}", sec["text"]) if p.strip()]
-            if not parts:
-                parts = re.split(r'(?<=[.!?])\s+(?=[A-ZÀ-ÖØ-Ý])', sec["text"])
-            paras = [p.strip() for p in parts if p.strip()]
+        # normalizza la sezione "kept" usando lo stesso splitter globale
+        text = sec.get("text") or sec.get("narrative") or ""
+        paras = sec.get("paragraphs") or _split_into_paragraphs(text)
+
         return {
             "id": sec.get("id") or f"sec-{i}",
             "title": sec.get("title") or f"Section {i+1}",
-            "text": sec.get("text") or "",
+            "text": text,
             "paragraphs": paras,
             "hasImage": bool(sec.get("hasImage")),
             "visible": sec.get("visible", True),
@@ -1380,3 +1535,24 @@ def pdf_proxy(url: str):
             "Content-Disposition": 'inline; filename="proxied.pdf"',
         },
     )
+
+
+
+from compute_story_score import compute_story_score  # 👈 importa la funzione
+
+# ATTENZIONE: non creare un nuovo FastAPI() se esiste già.
+# Riusa quello che hai, tipo:
+# app = FastAPI()
+# oppure lascia com'è e aggiungi SOLO la route.
+
+@app.post("/api/storyscore")
+async def api_storyscore(payload: dict):
+    """
+    Proxy HTTP -> funzione compute_story_score in compute_story_score.py
+    """
+    try:
+        result = compute_story_score(payload)
+        return result
+    except Exception as e:
+        print("[storyscore] error in backend:", e)
+        raise HTTPException(status_code=500, detail=str(e))

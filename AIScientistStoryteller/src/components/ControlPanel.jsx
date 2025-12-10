@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState, useLayoutEffect } from "react";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import styles from "./ControlPanel.module.css";
 import VersionGraph from "./VersionGraph";
+import { computeStoryScore } from "../services/storiesApi.js";
 
 // piccolo helper per non ripetere il boilerplate
 function Hint({ content, children, side = "top", align = "start" }) {
@@ -53,6 +54,12 @@ export default function ControlPanel({
   const indicatorRef = useRef(null);
   const posRef = useRef({ x: 0, w: 0 });
   const [cpReady, setCpReady] = useState(false);
+
+  // === StoryScore local state ===
+  const [score, setScore] = useState(null);
+  const [scoreLoading, setScoreLoading] = useState(false);
+  const [scoreError, setScoreError] = useState(null);
+
 
   function newIdemKey() {
     return crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
@@ -743,6 +750,23 @@ export default function ControlPanel({
             defaultsForInfo={defaultsForInfo}
             sections={sections}
             onJumpToSection={onJumpToSection}
+            // 🔽 nuovo
+            score={score}
+            scoreError={scoreError}
+            scoreLoading={scoreLoading}
+            onComputeStoryScore={async () => {
+              try {
+                setScoreLoading(true);
+                setScoreError(null);
+                const out = await computeStoryScore(story.id);
+                setScore(out);
+              } catch (e) {
+                console.error(e);
+                setScoreError("Errore nel calcolo dello StoryScore");
+              } finally {
+                setScoreLoading(false);
+              }
+            }}
           />
         )}
 
@@ -1200,6 +1224,11 @@ function InfoTab({
   defaultsForInfo,
   sections,
   onJumpToSection,
+  // 🔽 nuovi
+  score,
+  scoreError,
+  scoreLoading,
+  onComputeStoryScore,
 }) {
     // 🔹 Knob di base per la storia (NON la media corrente)
     const meta = story?.meta || {};
@@ -1264,6 +1293,26 @@ function InfoTab({
               </div>
 
               {(() => {
+                const last = summarizeLastPartialRegen(story);
+                if (!last) return null;
+                const tempPct = Number.isFinite(last.temp)
+                  ? Math.round(last.temp * 100)
+                  : null;
+                const when = last.at ? last.at.toLocaleString() : null;
+                return (
+                  <div className={styles.kv}>
+                    <div>Last partial regen</div>
+                    <div className={styles.kvVal}>
+                      {capFirst(last.preset)}
+                      {tempPct != null ? ` · ${tempPct}%` : ""}
+                      {last.sections?.length ? ` · ${last.sections.join(", ")}` : ""}
+                      {when ? ` — ${when}` : ""}
+                    </div>
+                  </div>
+                );
+              })()}
+              
+              {(() => {
                 const fromBackend = readBackendAggregates(story);
                 const { lengthLabel, avgTemp, sectionsCount } = fromBackend
                   ? fromBackend
@@ -1288,27 +1337,94 @@ function InfoTab({
                       <div>Creativity</div>
                       <div className={styles.kvVal}>{Math.round((avgTemp || 0) * 100)}%</div>
                     </div>
-                  </>
-                );
-              })()}
+                    {/* --- STORYSCORE BUTTON --- */}
+                    <div style={{ marginTop: "20px" }}>
+                      {scoreError && (
+                        <div className={styles.warn} style={{ marginBottom: "8px" }}>
+                          {scoreError}
+                        </div>
+                      )}
 
-              {(() => {
-                const last = summarizeLastPartialRegen(story);
-                if (!last) return null;
-                const tempPct = Number.isFinite(last.temp)
-                  ? Math.round(last.temp * 100)
-                  : null;
-                const when = last.at ? last.at.toLocaleString() : null;
-                return (
-                  <div className={styles.kv}>
-                    <div>Last partial regen</div>
-                    <div className={styles.kvVal}>
-                      {capFirst(last.preset)}
-                      {tempPct != null ? ` · ${tempPct}%` : ""}
-                      {last.sections?.length ? ` · ${last.sections.join(", ")}` : ""}
-                      {when ? ` — ${when}` : ""}
+                      <button
+                        className={styles.primary}
+                        disabled={scoreLoading}
+                        onClick={onComputeStoryScore}
+                      >
+                        {scoreLoading ? "Computing" : "Compute StoryScore"}
+                      </button>
                     </div>
-                  </div>
+
+                    {/* --- STORYSCORE DETAILS --- */}
+                    {score && (
+                      <div style={{ marginTop: "16px" }}>
+                        <div className={styles.kv}>
+                          <div>
+                            <Hint content="Global quality score (0–1). Weighted mix of all metrics: higher means better alignment, coverage and faithfulness to the paper.">
+                              <span>StoryScore</span>
+                            </Hint>
+                          </div>
+                          <div className={styles.kvVal}>
+                            {score.storyscore?.toFixed(3)}
+                          </div>
+                        </div>
+
+                        <div className={styles.kv}>
+                          <div>
+                            <Hint content="Semantic similarity between the story and the source paper using RoBERTa-large. 1.0 ≈ almost identical, 0 ≈ unrelated.">
+                              <span>BERTScore</span>
+                            </Hint>
+                          </div>
+                          <div className={styles.kvVal}>
+                            {score.bertscore?.toFixed(3)}
+                          </div>
+                        </div>
+
+                        <div className={styles.kv}>
+                          <div>
+                            <Hint content="Lexical recall: how many unique content words in the story also appear in the paper. Higher = better coverage of the original content.">
+                              <span>Context recall</span>
+                            </Hint>
+                          </div>
+                          <div className={styles.kvVal}>
+                            {score.ctx_recall?.toFixed(3)}
+                          </div>
+                        </div>
+
+                        <div className={styles.kv}>
+                          <div>
+                            <Hint content="Similarity between outline section titles and generated section titles (after normalization). 1.0 = perfect match.">
+                              <span>Title coverage</span>
+                            </Hint>
+                          </div>
+                          <div className={styles.kvVal}>
+                            {score.title_cov?.toFixed(3)}
+                          </div>
+                        </div>
+
+                        <div className={styles.kv}>
+                          <div>
+                            <Hint content="Repetition penalty: 1 − max trigram repetition. High values mean the story avoids repetitive phrasing and loops.">
+                              <span>No-loop</span>
+                            </Hint>
+                          </div>
+                          <div className={styles.kvVal}>
+                            {score.noloop?.toFixed(3)}
+                          </div>
+                        </div>
+
+                        <div className={styles.kv}>
+                          <div>
+                            <Hint content="Checks named people/organisations in the story against the paper. High values mean fewer invented entities (less hallucination).">
+                              <span>No-hallucination</span>
+                            </Hint>
+                          </div>
+                          <div className={styles.kvVal}>
+                            {score.nohall?.toFixed(3)}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </>
                 );
               })()}
             </>
@@ -1339,63 +1455,54 @@ function InfoTab({
                   baseDefaults.lengthPreset || lengthPresetDefault || "medium"
                 ).toLowerCase();
 
-                // valori della sezione (se presenti)
-                const rawTemp =
-                  typeof s?.temp === "number" ? s.temp : null;
-                const rawLen = s?.lengthPreset
-                  ? String(s.lengthPreset).toLowerCase()
-                  : null;
+                // ---- defaults di SEZIONE (come sul backend) ----
+                const secBase = {
+                  lengthPreset: String(s?.lengthPreset || baseLenStory || "medium").toLowerCase(),
+                  temp:
+                    typeof s?.temp === "number"
+                      ? s.temp
+                      : baseTempStory,
+                };
 
-                // 👇 override solo se DIVERSI dal base
-                const hasTempOverride =
-                  rawTemp != null && Math.abs(rawTemp - baseTempStory) > 1e-3;
-                const hasLenOverride =
-                  rawLen != null && rawLen !== baseLenStory;
+                // normalizza i paragrafi a oggetti {text, temp, lengthPreset}
+                const parasRaw = Array.isArray(s?.paragraphs) ? s.paragraphs : [];
+                const parasNorm = parasRaw.map((p) =>
+                  typeof p === "string" ? { text: p } : (p || {})
+                );
 
-                // 👇 paragrafi: se hanno temp/lengthPreset, usali per la media
-                const paras = Array.isArray(s?.paragraphs) ? s.paragraphs : [];
-                const richParas = paras
-                  .map((p) =>
-                    typeof p === "string" ? { text: p } : (p || {})
-                  )
-                  .filter(
-                    (p) =>
-                      p.text &&
-                      (typeof p.temp === "number" || p.lengthPreset)
+                // c'è almeno un paragrafo con knob espliciti?
+                const hasRichParas = parasNorm.some(
+                  (p) => p.text && (typeof p.temp === "number" || p.lengthPreset)
+                );
+
+                // ---- aggregati di sezione (clona computeSectionAggregates del backend) ----
+                let effTemp = secBase.temp;
+                let effLen = secBase.lengthPreset;
+
+                if (parasNorm.length > 0) {
+                  const temps = parasNorm.map((p) =>
+                    typeof p.temp === "number" ? p.temp : secBase.temp
+                  );
+                  const lens = parasNorm.map((p) =>
+                    String(p.lengthPreset || secBase.lengthPreset || "medium").toLowerCase()
                   );
 
-                let effTemp;
-                let effLen;
-
-                if (richParas.length > 0) {
-                  // media SOLO su questa sezione
-                  const temps = richParas.map((p) =>
-                    typeof p.temp === "number" ? p.temp : baseTempStory
-                  );
-                  const avgTemp =
-                    temps.reduce((a, b) => a + b, 0) / temps.length;
-
-                  const lens = richParas.map((p) =>
-                    String(
-                      p.lengthPreset || baseLenStory || "medium"
-                    ).toLowerCase()
-                  );
                   const allSameLen = lens.every((l) => l === lens[0]);
-                  const lenLabel = allSameLen ? lens[0] : "mix";
-
-                  effTemp = avgTemp;
-                  effLen = lenLabel;
-                } else {
-                  // nessun dato a livello di paragrafo → usa override di sezione o base globale
-                  effTemp = hasTempOverride ? rawTemp : baseTempStory;
-                  effLen = hasLenOverride ? rawLen : baseLenStory;
+                  effLen = allSameLen ? lens[0] : "mix";
+                  effTemp = temps.reduce((a, b) => a + b, 0) / temps.length;
                 }
 
-                const showBadge =
-                  hasTempOverride || hasLenOverride || richParas.length > 0 || touched;
+                // badge: override esplicito o paragrafi “ricchi” o lastPartial
+                const hasTempOverride =
+                  typeof s?.temp === "number" &&
+                  Math.abs(s.temp - baseTempStory) > 1e-3;
+                const hasLenOverride =
+                  s?.lengthPreset &&
+                  String(s.lengthPreset).toLowerCase() !== baseLenStory;
 
+                const showBadge = hasTempOverride || hasLenOverride || hasRichParas || touched;
                 const badgeLabel =
-                  hasTempOverride || hasLenOverride || richParas.length > 0
+                  hasTempOverride || hasLenOverride || hasRichParas
                     ? "overridden"
                     : "recent regen";
 
@@ -1603,79 +1710,68 @@ function capFirst(s) {
   return String(s || "").replace(/^\w/, (m) => m.toUpperCase());
 }
 function getLengthPreset(meta) {
-    const up = meta?.upstreamParams || {};
-    const st = meta?.storytellerParams || meta?.storyteller_params || {};
-  
-    // 1) VM / upstream / meta.lengthPreset
-    if (st.length_preset) return String(st.length_preset);
-    if (st.lengthPreset) return String(st.lengthPreset);
-    if (up.lengthPreset) return String(up.lengthPreset);
-    if (meta?.lengthPreset) return String(meta.lengthPreset);
-  
-    // 2) fallback da numero di parole, se presente
-    const words = Number(meta?.lengthPerSection);
-    if (Number.isFinite(words)) {
-      if (words <= 120) return "short";
-      if (words >= 200) return "long";
-      return "medium";
-    }
-  
-    // 3) default
+  if (!meta) return "medium";
+
+  const up = meta.upstreamParams || {};
+
+  // 1) knob GLOBALI salvati da te
+  if (up.lengthPreset) return String(up.lengthPreset);
+
+  // 2) valore legacy a livello storia
+  if (meta.lengthPreset) return String(meta.lengthPreset);
+
+  // 3) inferito da parole per sezione
+  const words = Number(meta.lengthPerSection);
+  if (Number.isFinite(words)) {
+    if (words <= 120) return "short";
+    if (words >= 200) return "long";
     return "medium";
   }
+
+  // 4) default
+  return "medium";
+}
+
+
   
 function getCreativity(meta) {
-    // 1) prima di tutto: quello della VM
-    const vm = realKnobsFromVM(meta);
-    if (typeof vm.temp === "number") {
-      return quantizeTemp01(vm.temp); // es. 0.0 -> 0%
-    }
-  
-    // 2) poi quello che hai salvato tu quando l’utente ha rigenerato la STORIA
-    if (meta?.upstreamParams?.temp != null)
-      return quantizeTemp01(meta.upstreamParams.temp);
-  
-    // 3) vecchio formato "creativity: 30"
-    if (typeof meta?.creativity === "number")
-      return quantizeTemp01(Number(meta.creativity) / 100);
-  
-    // ❌ NON guardiamo più currentAggregates per il “knob di base”
-    return 0.0;
+  if (!meta) return 0.0;
+
+  const up = meta.upstreamParams || {};
+
+  // 1) knob GLOBALI salvati da te
+  if (typeof up.temp === "number") {
+    return quantizeTemp01(up.temp);
   }
+
+  // 2) vecchio formato "creativity: 50"
+  if (typeof meta.creativity === "number") {
+    return quantizeTemp01(meta.creativity / 100);
+  }
+
+  // 3) fallback: media dagli aggregati backend
+  if (typeof meta.currentAggregates?.avgTemp === "number") {
+    return quantizeTemp01(meta.currentAggregates.avgTemp);
+  }
+
+  // default neutro
+  return 0.0;
+}
+
+
   
 function defaultKnobsFromMeta(meta, sectionCount = null) {
-  const vm = realKnobsFromVM(meta);         // 👈 valori veri VM
-  const up = meta?.upstreamParams || {};
-  const hasTargets = Array.isArray(up.targets) && up.targets.length > 0;
-
-  // length: VM > upstreamParams > inferita
-  const baseLP =
-    vm.lengthPreset ||
-    up.lengthPreset ||
-    getLengthPreset(meta) ||
-    "medium";
-
-  // temp: VM > upstreamParams > inferita
-  const baseTemp =
-    typeof vm.temp === "number"
-      ? vm.temp
-      : typeof up.temp === "number"
-      ? up.temp
-      : getCreativity(meta);
-
-  if (hasTargets) {
-    // chiamata parziale → tieni i valori dell’ultima rigenerazione
-    return {
-      lengthPreset: String(baseLP || "medium"),
-      temp: Number(isFinite(baseTemp) ? baseTemp : 0),
-    };
-  }
+  const baseLP = getLengthPreset(meta) || "medium";
+  const baseTemp = getCreativity(meta);
 
   return {
     lengthPreset: String(baseLP || "medium"),
     temp: Number(isFinite(baseTemp) ? baseTemp : 0),
   };
 }
+
+
+
 function sectionKnobs(section, defaults) {
   const temp = typeof section?.temp === "number" ? section.temp : defaults.temp;
   const lengthPreset = section?.lengthPreset || defaults.lengthPreset;

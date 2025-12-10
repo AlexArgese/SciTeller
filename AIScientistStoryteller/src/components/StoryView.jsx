@@ -3,21 +3,57 @@ import { useMemo } from "react";
 import styles from "./StoryView.module.css";
 import Lottie from "lottie-react";
 import animationData from "../assets/data.json";
+import katex from "katex";
+import "katex/dist/katex.min.css";
 
 function splitIntoParagraphs(txt) {
-  if (!txt) return [];
-  const clean = normalizeStoryText(txt);
-  let parts = clean.split(/\n{2,}|\r?\n\s*\r?\n/g);
-  if (parts.length === 1) {
-    const chunks = clean.split(/([.!?])\s+(?=[A-ZÀ-ÖØ-Ý])/g);
-    parts = chunks.reduce((acc, chunk, i, arr) => {
-      if (/[.!?]/.test(chunk) && arr[i + 1]) acc.push((arr[i - 1] || "") + chunk);
-      else if (i === arr.length - 1) acc.push(chunk);
-      return acc;
-    }, []);
+  const s = (txt || "").toString().replace(/\r\n/g, "\n").trim();
+  if (!s) return [];
+
+  // 1) blocchi separati da linee vuote
+  const blocks = s
+    .split(/\n{2,}|\r?\n\s*\r?\n/g)
+    .map(t => t.trim())
+    .filter(Boolean);
+
+  const paras = [];
+
+  for (const block of blocks) {
+    // se è già corto o contiene newline, tienilo così
+    if (block.length < 320 || /\n/.test(block)) {
+      paras.push(block);
+      continue;
+    }
+
+    // 2) split in frasi SENZA gruppi catturanti e senza ".Frase"
+    const sentences = block
+      .split(/(?<=[.!?])\s+(?=[A-ZÀ-ÖØ-Ý])/g)
+      .map(t => t.trim())
+      .filter(Boolean);
+
+    if (sentences.length <= 1) {
+      paras.push(block);
+      continue;
+    }
+
+    // 3) riaccorpa frasi in paragrafi ~2–3 frasi
+    let current = sentences[0];
+    for (let i = 1; i < sentences.length; i++) {
+      const next = sentences[i];
+      if ((current + " " + next).length <= 400) {
+        current = current + " " + next;
+      } else {
+        paras.push(current);
+        current = next;
+      }
+    }
+    if (current) paras.push(current);
   }
-  return parts.map(s => s.trim()).filter(Boolean);
+
+  return paras;
 }
+
+
 function tryParseObject(str) {
   try { return JSON.parse(str); } catch { return null; }
 }
@@ -90,6 +126,79 @@ function normalizeStoryText(txt) {
   return s.trim();
 }
 
+function renderTextWithMath(text) {
+  const src = String(text ?? "");
+  const parts = [];
+  // supporta \( ... \) come inline math
+  const regex = /\\\((.+?)\\\)/g;
+
+  let lastIndex = 0;
+  let match;
+
+  while ((match = regex.exec(src)) !== null) {
+    const matchIndex = match.index;
+
+    // testo normale prima della formula
+    if (matchIndex > lastIndex) {
+      parts.push({
+        type: "text",
+        value: src.slice(lastIndex, matchIndex),
+      });
+    }
+
+    // contenuto della formula (senza \( \))
+    const mathContent = match[1];
+
+    parts.push({
+      type: "math",
+      value: mathContent,
+    });
+
+    lastIndex = regex.lastIndex;
+  }
+
+  // eventuale testo dopo l'ultima formula
+  if (lastIndex < src.length) {
+    parts.push({
+      type: "text",
+      value: src.slice(lastIndex),
+    });
+  }
+
+  return parts.map((part, i) => {
+    if (part.type === "math") {
+      let html = "";
+      try {
+        html = katex.renderToString(part.value, {
+          throwOnError: false,
+          output: "html",
+        });
+      } catch (e) {
+        // in caso di errore, mostra solo il sorgente
+        return (
+          <span key={i}>
+            {"\\("}
+            {part.value}
+            {"\\)"}
+          </span>
+        );
+      }
+
+      return (
+        <span
+          key={i}
+          // KaTeX produce HTML, lo iniettiamo
+          dangerouslySetInnerHTML={{ __html: html }}
+        />
+      );
+    }
+
+    // testo normale
+    return <span key={i}>{part.value}</span>;
+  });
+}
+
+
 // ★ helper per capire qual è la revisione della story che stiamo mostrando
 function getStoryRevisionId(story) {
   return (
@@ -140,30 +249,57 @@ export default function StoryView({
   const currentStoryRevisionId = getStoryRevisionId(story);
 
   const sections = useMemo(() => {
-    const src = Array.isArray(story.sections) ? story.sections : [];
-  
-    return src
-      .filter(s => s?.visible !== false)
-      .map((s, i) => {
-        const id = String(s.id ?? s.sectionId ?? i);
-  
-        // narrative > text, poi unwrap aggressivo
-        const rawText =
-          (typeof s.narrative === "string" && s.narrative.trim()) ||
-          (typeof s.text === "string" && s.text.trim()) ||
-          "";
-  
-        const unwrapped = stripJsonLikeWrapper(rawText);
-        const paragraphs = splitIntoParagraphs(unwrapped);
-  
-        return {
-          ...s,
-          id,
-          title: s.title || `Section ${i + 1}`,
-          paragraphs: paragraphs.length ? paragraphs : ["(no text)"],
-        };
-      });
-  }, [story, story?.revisionId, story?.updatedAt]);  
+    const rawSections = Array.isArray(story?.sections) ? story.sections : [];
+    console.debug("[StoryView] RAW sections from props:", rawSections);
+
+    return rawSections.map((s, i) => {
+      // 🔴 fix: usa anche sectionId e forza a stringa
+      const id = String(s.id ?? s.sectionId ?? i);
+
+      // 1) testo “grezzo” dalla sezione
+      const rawText =
+        (typeof s.narrative === "string" && s.narrative.trim()) ||
+        (typeof s.text === "string" && s.text.trim()) ||
+        "";
+
+      const unwrapped = stripJsonLikeWrapper(rawText);
+
+      // 2) paragraphs dal backend → li uso come base, ma poi rispezzo
+      const backendParas = Array.isArray(s.paragraphs)
+        ? s.paragraphs
+            .map((p) =>
+              typeof p === "string"
+                ? p
+                : p && p.text
+                ? String(p.text)
+                : ""
+            )
+            .map((t) => t.trim())
+            .filter(Boolean)
+        : [];
+
+      const baseText = backendParas.length
+        ? backendParas.join("\n\n")
+        : unwrapped;
+
+      // 3) splitter “safe” in frasi / mini-paragrafi
+      // ⬇️ se il backend ha già fatto lo split, ci fidiamo.
+      // Usiamo splitIntoParagraphs SOLO come fallback.
+      const paragraphs = backendParas.length
+        ? backendParas
+        : splitIntoParagraphs(unwrapped);
+
+      return {
+        ...s,
+        id,
+        title: s.title || `Section ${i + 1}`,
+        rawText,
+        unwrapped,
+        paragraphs: paragraphs.length ? paragraphs : ["(no text)"],
+      };
+    });
+  }, [story]);
+
 
   if (!sections.length) {
     return (
@@ -298,7 +434,10 @@ export default function StoryView({
                       ) : !showInlineCarousel ? (
                         <p
                           className={`${styles.p} ${styles.pSelectable} ${isSel ? styles.pActive : ""}`}
-                          onClick={() => onToggleParagraph?.(sec.id, idx, effectiveText)}
+                          onClick={(e) => {
+                            e.stopPropagation(); // blocca la risalita fino al <section>
+                            onToggleParagraph?.(sec.id, idx, effectiveText);
+                          }}
                           tabIndex={0}
                           aria-selected={isSel ? "true" : "false"}
                           title={
@@ -307,7 +446,7 @@ export default function StoryView({
                               : "Click to modify or view alternatives"
                           }
                         >
-                          {effectiveText}
+                          {renderTextWithMath(effectiveText)}
                           {isSel && !isSameRevisionAsParagraph && (
                             <span
                               style={{

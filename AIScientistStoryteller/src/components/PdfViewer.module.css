@@ -1,0 +1,244 @@
+/* FILE: src/components/PdfViewer.module.css */
+
+.root {
+  display: grid;
+  grid-template-columns: 1fr 260px;
+  gap: 12px;
+  width: 100%;
+}
+
+.rootNoSidebar {
+  grid-template-columns: 1fr;
+}
+
+/* Colonna principale: toolbar + pagine */
+.viewer {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* ─── Toolbar ───────────────────────────────── */
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: color-mix(in oklab, var(--bg-navbar) 86%, transparent);
+  border-radius: 10px;
+  margin-bottom: 8px;
+  border: 1px dashed var(--line-0);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}
+
+.navGroup {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.navBtn {
+  appearance: none;
+  border-radius: 999px;
+  background: var(--glass-blue-bg);
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  line-height: 0.7;
+  transition:
+    background var(--dur-2, .18s) var(--ease-emph, cubic-bezier(.2,.6,.2,1)),
+    box-shadow var(--dur-2, .18s) var(--ease-emph, cubic-bezier(.2,.6,.2,1)),
+    transform var(--dur-2, .18s) var(--ease-emph, cubic-bezier(.2,.6,.2,1));
+  box-shadow: var(--glass-blue-sd);
+  color: #fff;
+}
+
+.navBtn:hover:not(:disabled) {
+  background: var(--glass-blue-bg);
+  transform: translateY(-1px);
+  box-shadow: var(--glass-blue-sd);
+  color: #f5f5f5;
+}
+
+.navBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+/* centro: info pagina */
+.pageInfo {
+  flex: 1;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+/* ─── Zoom ─────────────────────────────────── */
+
+.zoomGroup {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.zoomBtn {
+  composes: navBtn;
+  width: 26px;
+  height: 26px;
+}
+
+.zoomDisplayBtn {
+  min-width: 64px;
+  text-align: center;
+  padding: 2px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--line-0);
+  background: color-mix(in oklab, var(--panel) 82%, transparent);
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    background var(--dur-2, .18s) var(--ease-emph, cubic-bezier(.2,.6,.2,1)),
+    box-shadow var(--dur-2, .18s) var(--ease-emph, cubic-bezier(.2,.6,.2,1));
+  box-shadow: 0 0 0 0 rgba(0,0,0,0);
+}
+
+.zoomDisplayBtn:hover {
+  background: color-mix(in oklab, var(--panel) 90%, transparent);
+  box-shadow: var(--shadow-1);
+}
+
+/* Menu a tendina per lo zoom */
+.zoomMenu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-navbar);
+  border-radius: 8px;
+  box-shadow: var(--glass-sd);
+  padding: 4px;
+  z-index: 40;
+  min-width: 150px;
+}
+
+.zoomMenuItem {
+  width: 100%;
+  text-align: left;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-2);
+  transition:
+    background var(--dur-2, .18s) var(--ease-emph, cubic-bezier(.2,.6,.2,1)),
+    color var(--dur-2, .18s) var(--ease-emph, cubic-bezier(.2,.6,.2,1));
+}
+
+.zoomMenuItem:hover {
+  background: color-mix(in oklab, var(--accent) 12%, var(--panel));
+  color: var(--heading);
+}
+
+/* ─── Contenitore pagine ───────────────────── */
+
+.pagesContainer {
+  width: 100%;
+  overflow: auto;
+  border: 1px dashed var(--line-0);
+  border-radius: 10px;
+  padding: 10px;
+  background: color-mix(in oklab, var(--panel) 92%, var(--bg) 8%);
+  max-height: 80vh;
+}
+
+.pageWrapper {
+  margin-bottom: 16px;
+}
+
+/* il canvas del PDF rimane “foglio” chiaro anche in dark */
+.pageCanvas {
+  width: 100%;
+  border-radius: 8px;
+  box-shadow: var(--shadow-1);
+  display: block;
+  background: #fff;
+}
+
+/* ─── Sidebar match list ───────────────────── */
+
+.sidebar {
+  border: 1px dashed var(--line-0);
+  border-radius: 10px;
+  padding: 10px;
+  background: var(--glass-bg);
+  max-height: 80vh;
+  overflow: auto;
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  backdrop-filter: blur(var(--glass-blur));
+}
+
+.sidebarTitle {
+  font-family: var(--font-serif);
+  font-weight: 700;
+  font-size: 14px;
+  margin: 0 0 8px;
+  color: var(--heading);
+}
+
+.matchBtn {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  border-radius: 8px;
+  border: 1px dashed var(--line-0);
+  background: color-mix(in oklab, var(--panel) 88%, var(--bg) 12%);
+  cursor: pointer;
+  transition:
+    background var(--dur-2, .18s) var(--ease-emph, cubic-bezier(.2,.6,.2,1)),
+    border-color var(--dur-2, .18s) var(--ease-emph, cubic-bezier(.2,.6,.2,1)),
+    transform var(--dur-2, .18s) var(--ease-emph, cubic-bezier(.2,.6,.2,1)),
+    box-shadow var(--dur-2, .18s) var(--ease-emph, cubic-bezier(.2,.6,.2,1));
+}
+
+.matchBtn:hover {
+  background: color-mix(in oklab, var(--accent) 8%, var(--panel) 92%);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-1);
+}
+
+.matchBtnActive {
+  background: color-mix(in oklab, var(--accent) 16%, var(--panel) 84%);
+  border-color: color-mix(in oklab, var(--accent) 36%, var(--line-0));
+  box-shadow: 0 6px 18px -12px rgba(0,0,0,.25);
+}
+
+.matchTitle {
+  font-weight: 600;
+  color: var(--heading);
+  margin-bottom: 2px;
+  font-size: 13px;
+}
+
+.matchMeta {
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+/* ─── Responsive ───────────────────────────── */
+
+@media (max-width: 960px) {
+  .root {
+    grid-template-columns: 1fr;
+  }
+}

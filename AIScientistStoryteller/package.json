@@ -15,6 +15,7 @@
     "@react-three/fiber": "^9.3.0",
     "dagre": "^0.8.5",
     "gsap": "^3.13.0",
+    "katex": "^0.16.27",
     "lottie-react": "^2.4.1",
     "maath": "^0.10.8",
     "pdfjs-dist": "^3.11.174",

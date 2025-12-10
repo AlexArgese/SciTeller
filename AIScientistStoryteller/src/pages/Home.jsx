@@ -189,7 +189,7 @@ export default function Home() {
 
   const handleBackendLog = (data) => {
     console.log("[SSE] raw data:", data);
-  
+
     let evt;
     try {
       evt = typeof data === "string" ? JSON.parse(data) : data;
@@ -197,47 +197,130 @@ export default function Home() {
       evt = null;
     }
     const t = evt?.type;
-  
+
+    // ========== FASE PARSING ==========
     if (t === "parsing_start") {
       setPhase("extract");
+      setExtractDone(false);
+      setSplitterStarted(false);
+      setStoryStarted(false);
+      setStorySectionsDone(0);
+      setAllDoneFlag(false);
+      setOutlineTitles([]);
+      setCurrentSection(-1);
       return;
     }
-  
+
     if (t === "parsing_done") {
+      setExtractDone(true);
       return;
     }
-  
+
+    // ========== FASE GENERALE STORY ==========
     if (t === "generation_start") {
       setPhase("story");
       setInQueue(false);
       return;
     }
-  
+
+    // ========== SPLITTER (OUTLINE) ==========
+    if (t === "splitter_start") {
+      setSplitterStarted(true);
+      return;
+    }
+
+    if (t === "splitter_progress" && typeof evt.index === "number" && evt.title) {
+      setOutlineTitles((prev) => {
+        const next = [...prev];
+        next[evt.index] = evt.title;
+        return next;
+      });
+      return;
+    }
+
+    if (t === "splitter_done") {
+      return;
+    }
+
+    // fallback: outline_ready (se mai lo usi ancora)
     if (t === "outline_ready" && Array.isArray(evt.titles)) {
       setOutlineTitles(evt.titles);
       setCurrentSection(-1);
       setPhase("story");
       return;
     }
-  
-    if (t === "section_start") {
-      if (typeof evt.index === "number") setCurrentSection(evt.index);
+
+    // ========== STORYTELLER ==========
+    if (t === "story_start") {
+      setStoryStarted(true);
       setPhase("story");
       setInQueue(false);
       return;
     }
-  
+
+    // story_progress = sezione i in scrittura
+    if (t === "story_progress" && typeof evt.index === "number") {
+      setCurrentSection(evt.index);
+      setPhase("story");
+      setInQueue(false);
+
+      // sezioni completate ~ indice corrente
+      setStorySectionsDone((prev) => (evt.index > prev ? evt.index : prev));
+
+      if (evt.title) {
+        setOutlineTitles((prev) => {
+          const next = [...prev];
+          if (!next[evt.index]) {
+            next[evt.index] = evt.title;
+          }
+          return next;
+        });
+      }
+      return;
+    }
+
+    if (t === "story_done") {
+      // tutte le sezioni consideriamo "fatte"
+      setStorySectionsDone((prev) => {
+        const n = outlineTitles.length || targetSections || 5;
+        return Math.max(prev, n);
+      });
+      return;
+    }
+
+    // compat vecchi eventi
+    if (t === "outline_section_start" && evt.title) {
+      setOutlineTitles((prev) => [...prev, evt.title]);
+      return;
+    }
+
+    if (t === "story_section_start" && typeof evt.index === "number") {
+      setCurrentSection(evt.index);
+      setPhase("story");
+      setInQueue(false);
+      return;
+    }
+
+    if (t === "story_section_done" && typeof evt.index === "number") {
+      return;
+    }
+
+    // coda
     if (t === "queue") {
       setInQueue(true);
       return;
     }
-  
+
+    // fine job
     if (t === "all_done") {
-      try { sseRef.current?.close?.(); } catch {}
+      setAllDoneFlag(true);
+      try {
+        sseRef.current?.close?.();
+      } catch {}
       return;
     }
-  
-    // fallback regex vecchi log
+
+    // === Fallback regex su vecchi log testuali ===
     const L = String(data || "");
     if (RE_START_DOCPARSE.test(L)) {
       setPhase("extract");
@@ -245,7 +328,6 @@ export default function Home() {
       setPhase("story");
     }
   };
-  
 
 
   const attachExplainLogsSSE = (jobId) => {
@@ -365,6 +447,7 @@ export default function Home() {
         title_style: "didactic",
         title_max_words: 6,
       };
+      setTargetSections(options.limit_sections || 5);
 
 
       // 3) crea story provvisoria
@@ -411,6 +494,39 @@ export default function Home() {
   const canGenerate = step1Done && step2Done;
 
   const [inQueue, setInQueue] = useState(false);
+  // 👉 NUOVI STATE PER LA PROGRESS BAR
+  const [targetSections, setTargetSections] = useState(5);   // di base 5
+  const [extractDone, setExtractDone] = useState(false);
+  const [splitterStarted, setSplitterStarted] = useState(false);
+  const [storyStarted, setStoryStarted] = useState(false);
+  const [storySectionsDone, setStorySectionsDone] = useState(0);
+  const [allDoneFlag, setAllDoneFlag] = useState(false);
+  const [progress, setProgress] = useState(0);
+
+  useEffect(() => {
+    const n = outlineTitles.length || targetSections || 5;
+
+    const totalSteps = 1 + 1 + n + 1 + n + 1; // extract + splitter_start + n + story_start + n + all_done
+    const doneSteps =
+      (extractDone ? 1 : 0) +
+      (splitterStarted ? 1 : 0) +
+      Math.min(outlineTitles.length, n) +
+      (storyStarted ? 1 : 0) +
+      Math.min(storySectionsDone, n) +
+      (allDoneFlag ? 1 : 0);
+
+    const frac = totalSteps > 0 ? doneSteps / totalSteps : 0;
+    setProgress(Math.max(0, Math.min(1, frac)));
+  }, [
+    extractDone,
+    splitterStarted,
+    storyStarted,
+    storySectionsDone,
+    allDoneFlag,
+    outlineTitles.length,
+    targetSections,
+  ]);
+
 
 
   if (isLoading) {
@@ -427,7 +543,7 @@ export default function Home() {
         ]}
         storyMsgs={[
           currentSection >= 0 && outlineTitles[currentSection]
-            ? `Generating section ${currentSection + 1}/${outlineTitles.length}: “${outlineTitles[currentSection]}”…`
+            ? `Generating section ${currentSection + 1}/${outlineTitles.length || targetSections}: “${outlineTitles[currentSection]}”…`
             : "Preparing outline…",
           "Adapting tone to persona…",
           "Refining transitions…",
@@ -436,6 +552,7 @@ export default function Home() {
         timeline={outlineTitles}
         currentStep={currentSection}
         inQueue={inQueue}
+        progress={progress}   // 👉 NUOVO
       />
     );
   }

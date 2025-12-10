@@ -21,6 +21,7 @@ services:
       REMOTE_GPU_URL: ${REMOTE_GPU_URL:-http://host.docker.internal:8018}
       DOCPARSE_BIN: docparse
       REMOTE_API_KEY: ${REMOTE_API_KEY}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://host.docker.internal:8000}
 
       # === HF cache config ===
       HF_HOME: /hf-cache

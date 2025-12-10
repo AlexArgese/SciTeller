@@ -107,7 +107,12 @@ export default function Reader() {
       <div className={s.left}>
         <div className={s.viewerCard}>
           <div className={s.viewerHead}>
-            <button onClick={() => nav(-1)} className={s.backBtn}>← Back</button>
+            <button
+              onClick={() => nav("/stories", { state: { selectedStoryId: storyId } })}
+              className={s.backBtn}
+            >
+              ← Back
+            </button>
             <div className={s.pdfTag}>PDF</div>
             {/* info minimale sui match */}
             <div className={s.matchInfo}>

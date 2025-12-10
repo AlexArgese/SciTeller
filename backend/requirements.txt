@@ -51,3 +51,7 @@ stringzilla
 google-cloud-aiplatform
 
 psycopg2-binary==2.9.9
+
+# ---- spaCy NER per StoryScore
+spacy
+bert-score

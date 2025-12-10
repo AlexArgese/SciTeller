@@ -1,112 +1,178 @@
-/* Full-page wrapper (centrato, identico approccio alle altre pagine) */
-.page{
-    min-height: calc(100vh - var(--nav-h, 0px));
-    display: grid;
-    place-items: start center;
-    padding: 24px 16px;
-  }
-  
-  /* Card “glass” centrale come le altre pagine */
-  .panel{
-    width: min(860px, 96vw);
-    margin: 10vh auto 0 auto ;
-    padding: 16px 18px 22px;
-    border-radius: 16px;
-    -webkit-backdrop-filter: blur(1px);
-    backdrop-filter: blur(1px);
-    background: var(--glass-bg);
-    box-shadow: var(--glass-sd);
-    text-align: center;
-  }
-  
-  /* Header */
-  .hero{ margin-bottom: 10px; }
-  .h1{
-    margin: 6px 0 4px;
-    font-family: var(--font-serif, ui-serif, Georgia, serif);
-    font-weight: 800;
-    color: var(--heading, #111);
-  }
-  .heroP{ margin: 0; color: rgba(0,0,0,.72); }
-  
-  /* Body */
-  .body{ margin-top: 6px; }
-  .center{ display: grid; place-items: center; padding: 8px 0 10px; }
-  .loaderWrap{ display: grid; place-items: center; height: 70px; }
-  
-  /* Spinner */
-  .spinner{
-    width: 42px; height: 42px; border-radius: 50%;
-    border: 3px solid rgba(0,0,0,.12);
-    border-top-color: rgba(0,0,0,.72);
-    animation: loading-spin 1s linear infinite;
-  }
-  
-  /* Glass utility (come nelle altre pagine) */
-  .glass{
-    background: rgba(255,255,255,.62);
-    -webkit-backdrop-filter: blur(6px);
-    backdrop-filter: blur(6px);
-    border: 1px solid rgba(0,0,0,.06);
-    box-shadow: 0 4px 14px rgba(0,0,0,.06);
-  }
-  .loading-container {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    height: 100vh;
-    background: white; /* oppure trasparente */
-  }
-  
-  .loading-text {
-    margin-top: 16px;
-    font-size: 1rem;
-    color: #444;
-    opacity: 0.7;
-  }
-  /* Ticker messaggi */
-  .ticker{
-    margin-top: 6px;
-    padding: 10px 12px;
-    border-radius: 12px;
-    min-height: 44px;
-    display: grid;
-    place-items: center;
-    background: var(--paper-3);
-  }
-  .tick{ font-weight: 700; color: var(--heading, #111); }
-  
-  .caption{
-    margin-top: 8px;
-    color: rgba(0,0,0,.6);
-    text-align: center;
-  }
-  
-  /* Keyframes */
-  @keyframes loading-spin { to { transform: rotate(360deg); } }
-  
-  /* Responsive */
-  @media (max-width: 520px){
-    .panel{ padding: 14px 14px 18px; border-radius: 14px; }
-    .spinner{ width: 36px; height: 36px; }
-  }
-  
+/* Full-page wrapper */
+.page {
+  min-height: calc(100vh - var(--nav-h, 0px));
+  display: grid;
+  place-items: start center;
+  padding: 24px 16px;
+  background: var(--bg);
+  color: var(--text);
+}
 
-.timeline { margin-top: 16px; display: grid; gap: 6px; }
-.timelineItem { display: flex; align-items: center; gap: 8px; }
-.timelineBullet { width: 16px; text-align: center; }
-.timelineText { opacity: 0.9; }
-[aria-current="step"] .timelineText { font-weight: 600; }
+/* Card “glass” centrale */
+.panel {
+  width: min(860px, 96vw);
+  margin: 10vh auto 0 auto;
+  padding: 16px 18px 22px;
+  border-radius: 16px;
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  backdrop-filter: blur(var(--glass-blur));
+  background: var(--glass-bg);
+  box-shadow: var(--glass-CP-sd, var(--glass-sd));
+  text-align: center;
+}
 
+/* Header */
+.hero {
+  margin-bottom: 10px;
+}
+
+.h1 {
+  margin: 6px 0 4px;
+  font-family: var(--font-serif, ui-serif, Georgia, serif);
+  font-weight: 800;
+  color: var(--heading);
+}
+
+.heroP {
+  margin: 0;
+  color: var(--text-2);
+}
+
+/* Progress bar */
+.progressRow {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.progressTrack {
+  width: 260px;
+  max-width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--line-0) 55%, transparent);
+  overflow: hidden;
+}
+
+.progressFill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 0.35s ease-out;
+}
+
+.progressLabel {
+  margin-top: 0;
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+/* Body */
+.body {
+  margin-top: 6px;
+}
+
+.center {
+  display: grid;
+  place-items: center;
+  padding: 8px 0 10px;
+}
+
+.loadingContainer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 160px;
+}
+
+/* Glass utility */
+.glass {
+  background: color-mix(in oklab, var(--glass-bg) 80%, var(--panel) 20%);
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid color-mix(in oklab, var(--border) 65%, transparent);
+  box-shadow: var(--glass-item-sd, var(--glass-sd));
+}
+
+/* Ticker messaggi */
+.ticker {
+  margin-top: 6px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  min-height: 44px;
+  display: grid;
+  place-items: center;
+  /* prima var(--paper-3) che non esisteva */
+  background: color-mix(in oklab, var(--panel) 65%, var(--panel-2) 35%);
+}
+
+.tick {
+  font-weight: 700;
+  color: var(--heading);
+}
+
+.caption {
+  margin-top: 8px;
+  color: var(--text-2);
+  opacity: 0.9;
+  text-align: center;
+}
+
+/* Timeline */
+.timeline {
+  margin-top: 16px;
+  display: grid;
+  gap: 6px;
+}
+
+.timelineItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-start;
+}
+
+.timelineBullet {
+  width: 16px;
+  text-align: center;
+  color: var(--text-2);
+}
+
+.timelineText {
+  opacity: 0.9;
+  text-align: left;
+  color: var(--text-2);
+}
+
+[aria-current="step"] .timelineText {
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* Queue notice */
 .queueNotice {
   margin-top: 20px;
   padding: 12px 16px;
   border-radius: 12px;
-  background: var(--paper-0);
-  border: 2px dashed var(--paper-2);
+  background: color-mix(in oklab, var(--panel) 80%, var(--bg) 20%);
+  border: 2px dashed color-mix(in oklab, var(--border) 70%, transparent);
   color: var(--accent);
   font-size: 0.95rem;
   text-align: center;
-  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  backdrop-filter: blur(var(--glass-blur));
+}
+
+/* Responsive */
+@media (max-width: 520px) {
+  .panel {
+    padding: 14px 14px 18px;
+    border-radius: 14px;
+  }
+
+  .progressTrack {
+    width: 210px;
+  }
 }

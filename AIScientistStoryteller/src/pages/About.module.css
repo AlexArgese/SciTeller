@@ -1,35 +1,35 @@
 /* =============== SciTeller — About page (coerente con Home/Stories/Navbar) =============== */
 
-.page{
+.page {
   margin: calc(var(--nav-h) + 16px) 10% var(--sp-6);
   padding: clamp(16px, 3vw, 28px);
   position: relative;
 }
 
-/* Glow leggero che segue il mouse (opzionale: gestito altrove settando --lx/--ly) */
+/* Glow leggero che segue il mouse (usa palette, non bianco puro) */
 .page::before{
-  content:"";
-  position:absolute; inset:0;
-  background: radial-gradient(320px 240px at var(--lx, 40%) var(--ly, 20%), rgba(255,255,255,.18), transparent 70%);
-  pointer-events:none;
+  content: none !important;
 }
+
 
 /* ================= HERO ================= */
 
-.hero{
+.hero {
   text-align: center;
   margin: var(--sp-4) 0 var(--sp-6);
 }
-.title{
+
+.title {
   font-family: var(--font-serif);
   font-size: clamp(38px, 5vw, 62px);
   line-height: var(--lh-tight);
-  letter-spacing: .01em;
+  letter-spacing: 0.01em;
   color: var(--heading);
   font-weight: 800;
   margin: 0 0 var(--sp-2);
 }
-.lead{
+
+.lead {
   max-width: 68ch;
   margin: 0 auto;
   color: var(--text-2);
@@ -39,71 +39,90 @@
 
 /* ============== SEZIONI A DUE COLONNE ============== */
 
-.row{
+.row {
   display: grid;
-  grid-template-columns: 1.1fr .9fr;
+  grid-template-columns: 1.1fr 0.9fr;
   gap: var(--sp-5);
   align-items: center;
-  margin: 5em 0 ;
+  margin: 5em 0;
 }
 
-.column{
-  margin: 5em 0 ;
+/* blocco singolo “colonna intera” */
+.column {
+  margin: 5em 0;
 }
-
 
 /* Colonne */
-.colText{ display: grid; gap: var(--sp-2); }
-.colText p{ color: var(--text); line-height: 1.6; }
 
-.colMedia{
+.colText {
+  display: grid;
+  gap: var(--sp-2);
+}
+.colText p {
+  color: var(--text);
+  line-height: 1.6;
+}
+
+.colMedia {
   display: grid;
   align-items: center;
   justify-items: center;
 }
 
 /* Titoli sezione */
-.h2{
+.h2 {
   font-family: var(--font-serif);
   font-size: clamp(22px, 2.2vw, 28px);
   line-height: 1.2;
   color: var(--heading);
   margin: 0 0 var(--sp-2);
   font-weight: 800;
-  letter-spacing: .01em;
+  letter-spacing: 0.01em;
 }
 
 /* Punti elenco “testuali” (coerenti con il resto) */
-.bulletLike{
+.bulletLike {
   position: relative;
   padding-left: 1.15em;
 }
-.bulletLike::before{
-  content:"•";
+.bulletLike::before {
+  content: "•";
   position: absolute;
-  left: 0; top: 0;
+  left: 0;
+  top: 0;
   color: color-mix(in oklab, var(--heading) 84%, var(--text-2));
   font-weight: 800;
 }
 
-/* Immagini / placeholder con glass */
-.imgBox{
+/* Immagini / placeholder con glass soft */
+.imgBox {
   width: 100%;
   min-height: 200px;
   display: grid;
   place-items: center;
-  color: var(--text-2);
   text-align: center;
   padding: var(--sp-3);
+  border-radius: 16px;
+
+  /* sfondo “paper soft” per leggibilità */
+  background: color-mix(in oklab, #ffffff 85%, var(--paper-1) 15%);
+  
+  /* vignettatura soft per effetto "foglio appoggiato" */
+  box-shadow: var(--glass-sd);
+
+  border: 1px solid color-mix(in oklab, var(--line-0) 60%, transparent);
 }
+
 .colMedia img{
   width: 100%;
   height: auto;
+  display: block;
 }
+
 
 /* ================= CREDITS ================= */
 
-.credits{
+.credits {
   margin: var(--sp-8) 0 var(--sp-4);
   padding: var(--sp-8) var(--sp-10);
   border-radius: 14px;
@@ -114,34 +133,42 @@
   box-shadow: var(--glass-sd);
 }
 
-.personBlock{
+.personBlock {
   display: grid;
   gap: var(--sp-2);
   margin-bottom: var(--sp-4);
   border: 1px dashed var(--line-0);
   padding: 10px 10px 15px;
   border-radius: 12px;
+  background: color-mix(in oklab, var(--panel) 88%, transparent);
 }
-.personName{
+
+.personName {
   font-weight: 800;
   color: var(--heading);
-  letter-spacing: .01em;
+  letter-spacing: 0.01em;
 }
-.personText{ color: var(--text); }
 
-.linksLabel{
+.personText {
+  color: var(--text);
+}
+
+.linksLabel {
   font-weight: 700;
   font-style: italic;
   color: var(--text-2);
 }
-.linkList{
+
+.linkList {
   display: flex;
   flex-wrap: wrap;
   gap: var(--sp-2);
-  padding: 0; margin: var(--sp-1) 0 0;
+  padding: 0;
+  margin: var(--sp-1) 0 0;
   list-style: none;
 }
-.linkList a{
+
+.linkList a {
   text-decoration: none;
   color: var(--heading);
   font-weight: 700;
@@ -149,33 +176,44 @@
   border-radius: 12px;
   background: color-mix(in oklab, var(--panel) 82%, transparent);
   border: 1px dashed var(--line-0);
-  transition: background var(--dur-2) var(--ease-emph), border-color var(--dur-2) var(--ease-emph);
+  transition:
+    background var(--dur-2) var(--ease-emph),
+    border-color var(--dur-2) var(--ease-emph);
 }
-.linkList a:hover{
+
+.linkList a:hover {
   background: color-mix(in oklab, var(--panel) 90%, transparent);
   border-color: color-mix(in oklab, var(--accent) 50%, var(--line-0));
 }
 
 /* Supervisors */
-.supervisors{ margin-top: var(--sp-5); }
-.supTitle{
+
+.supervisors {
+  margin-top: var(--sp-5);
+}
+
+.supTitle {
   font-weight: 800;
   color: var(--heading);
   margin-bottom: var(--sp-2);
 }
-.supList{
+
+.supList {
   display: grid;
   gap: var(--sp-3);
-  padding: 0; margin: 0;
+  padding: 0;
+  margin: 0;
   list-style: none;
 }
-.supList li{
+
+.supList li {
   padding: var(--sp-3);
   border-radius: 12px;
   background: color-mix(in oklab, var(--panel) 86%, transparent);
   border: 1px dashed var(--line-0);
 }
-.supName{
+
+.supName {
   font-weight: 800;
   margin-bottom: 6px;
   color: var(--heading);
@@ -183,49 +221,76 @@
 
 /* ================= ISTITUZIONI ================= */
 
-.institutions{
+.institutions {
   margin: var(--sp-6) 0 0;
 }
-.instTitle{
+
+.instTitle {
   font-weight: 800;
   color: var(--heading);
   margin-bottom: var(--sp-3);
 }
-.instLogos{
+
+.instLogos {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: var(--sp-4);
   align-items: center;
   justify-items: center;
 }
-.logoBox{
+
+.logoBox {
   width: min(360px, 90%);
-  display: grid; place-items: center;
+  display: grid;
+  place-items: center;
   border-radius: 14px;
   color: var(--heading);
   font-weight: 700;
   padding: 2em;
 }
-.logoBox img{
-  max-width: 88%;
+
+.logoBox img {
   object-fit: contain;
 }
 
 /* ================= ROUTE HOOK ================= */
 
-body[data-route="about"] .page{
-  /* nessun “saltino”: usa la stessa logica delle altre pagine */
+body[data-route="about"] .page {
+  /* agganciata al route, ma usa già gli stessi pattern di Home/Stories */
 }
 
 /* ================= RESPONSIVE ================= */
 
-@media (max-width: 980px){
-  .row, .column{ grid-template-columns: 1fr; }
-  .colMedia{ order: 2; }
-  .imgBox{ min-height: 160px; }
-  .instLogos{ grid-template-columns: 1fr; }
+@media (max-width: 980px) {
+  .row {
+    grid-template-columns: 1fr;
+    margin: var(--sp-6) 0;
+  }
+
+  .column {
+    margin: var(--sp-6) 0;
+  }
+
+  .colMedia {
+    order: 2;
+  }
+
+  .imgBox {
+    min-height: 160px;
+  }
+
+  .credits {
+    padding: var(--sp-6) var(--sp-4);
+  }
+
+  .instLogos {
+    grid-template-columns: 1fr;
+  }
 }
 
-@media (prefers-reduced-motion: reduce){
-  .page::before{ display: none; }
+/* Motion ridotta: niente glow che segue il mouse */
+@media (prefers-reduced-motion: reduce) {
+  .page::before {
+    display: none;
+  }
 }

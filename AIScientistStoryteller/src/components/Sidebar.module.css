@@ -1,7 +1,7 @@
 /* SciTeller — Sidebar sinistra (STICKY + glass) */
 .wrap {
   position: sticky;
-  top: calc(var(--nav-h) + 2*var(--sticky-gap, var(--sp-2)));
+  top: calc(var(--nav-h) + 2 * var(--sticky-gap, var(--sp-2)));
   width: var(--sidebar-w);
   align-self: stretch;
 }
@@ -10,7 +10,7 @@
 .panel {
   position: fixed;
   left: 0;
-  top: calc(var(--nav-h) + 2*var(--sticky-gap, var(--sp-2)));
+  top: calc(var(--nav-h) + 2 * var(--sticky-gap, var(--sp-2)));
   /* 👇 fino in fondo alla finestra */
   bottom: 7rem; /* margine sotto per respiro, puoi mettere 0 */
   width: var(--sidebar-w);
@@ -19,9 +19,9 @@
   grid-template-rows: 1fr auto;
 
   border-radius: 0 5px 5px 0;
-  background: var(--bg-navbar);
-  -webkit-backdrop-filter: blur(14px);
-  backdrop-filter: blur(3px);
+  background: color-mix(in oklab, var(--bg-navbar) 88%, var(--bg) 12%);
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  backdrop-filter: blur(var(--glass-blur));
   border: 1px dashed var(--line-0);
   overflow: hidden; /* importantissimo: niente roba che esce */
 }
@@ -34,14 +34,21 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
-  /* riempi tutto lo spazio disponibile sopra al footer */
-  height: 100%;
-  min-height: 0; /* per far funzionare lo scroll in grid */
+  height: 100%;   /* riempi tutto lo spazio disponibile sopra al footer */
+  min-height: 0;  /* per far funzionare lo scroll in grid */
 }
 
-.loading { padding: 8px 12px; color: #666; }
-.empty   { padding: 8px 12px; color: #888; font-style: italic; }
+.loading {
+  padding: 8px 12px;
+  color: var(--text-2);
+}
+.empty {
+  padding: 8px 12px;
+  color: var(--text-2);
+  font-style: italic;
+}
 
+/* singolo item storia */
 .item {
   display: grid;
   grid-template-columns: 1fr auto;
@@ -49,23 +56,31 @@
   gap: 6px;
   padding: 5px 12px;
   border-radius: 12px;
-  background: rgba(255,255,255,.58);
+
+  background: color-mix(in oklab, var(--panel) 88%, var(--glass-bg) 12%);
   -webkit-backdrop-filter: blur(4px);
   backdrop-filter: blur(4px);
+
   cursor: pointer;
-  transition: background var(--dur-2) var(--ease-emph), border-color var(--dur-2) var(--ease-emph);
+  transition:
+    background var(--dur-2) var(--ease-emph),
+    border-color var(--dur-2) var(--ease-emph),
+    box-shadow var(--dur-2) var(--ease-emph);
   border: 1px dashed var(--line-0);
   height: 2.5em;
   width: 100%;
 }
 .item:hover {
-  background: color-mix(in oklab, var(--accent) 49%, rgba(255,255,255,.62));
+  background: color-mix(in oklab, var(--accent) 16%, var(--panel) 84%);
+  box-shadow: var(--shadow-1);
 }
 
 .active {
-  background: color-mix(in oklab, var(--accent) 12%, rgba(255,255,255,.62));
+  background: color-mix(in oklab, var(--accent) 22%, var(--panel) 78%);
+  border-color: color-mix(in oklab, var(--accent) 40%, var(--line-0));
 }
 
+/* titolo storia */
 .itemTitle {
   font-weight: 700;
   color: var(--heading);
@@ -75,21 +90,31 @@
   font-size: small;
 }
 
+/* bottone delete */
 .deleteBtn {
-  width: 28px; height: 28px;
-  display: grid; place-items: center;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
   color: var(--text-2);
+  border-radius: 999px;
+  border: 1px solid transparent;
+  transition:
+    color var(--dur-2) var(--ease-emph),
+    border-color var(--dur-2) var(--ease-emph),
+    background var(--dur-2) var(--ease-emph);
 }
 .deleteBtn:hover {
   color: var(--danger);
   border-color: color-mix(in oklab, var(--danger) 40%, var(--line-0));
+  background: color-mix(in oklab, var(--danger) 8%, var(--panel) 92%);
 }
 
 /* footer SEMPRE visibile */
 .footer {
   padding: var(--sp-3);
   border-top: 1px dashed var(--line-0);
-  background: rgba(255,255,255,.36);
+  background: color-mix(in oklab, var(--panel) 90%, var(--bg) 10%);
   border-radius: 0 0 5px 0;
   min-height: 60px;
 }
@@ -100,8 +125,9 @@
   height: 46px;
 }
 
+/* focus accessibile, ma agganciato ad accent */
 .item:focus-visible {
-  outline: 2px solid rgba(99, 102, 241, 0.6);
+  outline: 2px solid color-mix(in oklab, var(--accent) 60%, transparent);
   outline-offset: 2px;
   border-radius: 10px;
 }

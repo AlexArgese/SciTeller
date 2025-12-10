@@ -2,8 +2,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { GlobalWorkerOptions, getDocument } from "pdfjs-dist";
 import "pdfjs-dist/web/pdf_viewer.css";
+import styles from "./PdfViewer.module.css";
 
 const DEBUG_PDF = true;
+
+// limiti e step zoom “alla Overleaf”
+const ZOOM_MIN = 0.5;   // 50%
+const ZOOM_MAX = 3.0;   // 300%
+const ZOOM_STEP = 0.01;  // ~10%
 
 // ✅ worker .js
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.js?url";
@@ -12,6 +18,10 @@ GlobalWorkerOptions.workerSrc = workerUrl;
 /* ───────── helpers ───────── */
 
 const clamp01 = (v) => Math.max(0, Math.min(1, Number(v) || 0));
+
+function clampZoom(z) {
+  return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z));
+}
 
 function toXYWH(rect) {
   // Caso 1: array [x1,y1,x2,y2] in coordinate normalizzate PDF (origine in basso)
@@ -65,7 +75,7 @@ if (!window.__PDFVIEWER_BEACON__) {
 export default function PdfViewer({
   url,
   page: controlledPage = null,      // pagina iniziale
-  scale = null,                      // se null → fit-to-width
+  scale = null,                      // se null → fit-to-width (base), poi applico zoom
   highlights = [],                   // [{page, rects:[[x1,y1,x2,y2],...], label?, score?}, ...]
   autoScroll = true,
   onError = () => {},
@@ -77,29 +87,32 @@ export default function PdfViewer({
   const pageCanvasesRef = useRef({});          // { [p]: <canvas> }
   const pageViewportCache = useRef({});        // { [p]: viewport }
   const renderTasksRef = useRef({});           // { [p]: renderTask }
-  const pageVersionRef = useRef({});           // { [p]: version counter }  ⟵ FIX qui
+  const pageVersionRef = useRef({});           // { [p]: version counter }
   const resizeObsRef = useRef(null);
 
   const [numPages, setNumPages] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
   const [isLoading, setIsLoading] = useState(true);
 
-    // Normalizza URL: se è remoto, passa dal proxy backend per evitare CORS
-    const resolvedUrl = useMemo(() => {
-      if (!url) return null;
-  
-      const isAbsoluteHttp = /^https?:\/\//i.test(url);
-      const isBackend = url.startsWith("/svc/") || url.startsWith("/api/");
-  
-      // se è un link esterno (es. https://papers.miccai.org/...), usa il proxy
-      if (isAbsoluteHttp && !isBackend) {
-        return `/svc/api/pdf-proxy?url=${encodeURIComponent(url)}`;
-      }
-  
-      // se è un URL del tuo backend, usalo diretto
-      return url;
-    }, [url]);
-  
+  // 🔍 Zoom “alla Overleaf”: 1.0 = 100% rispetto al fit-to-width
+  const [zoom, setZoom] = useState(1.0);
+  const [showZoomMenu, setShowZoomMenu] = useState(false);
+
+  // Normalizza URL: se è remoto, passa dal proxy backend per evitare CORS
+  const resolvedUrl = useMemo(() => {
+    if (!url) return null;
+
+    const isAbsoluteHttp = /^https?:\/\//i.test(url);
+    const isBackend = url.startsWith("/svc/") || url.startsWith("/api/");
+
+    // se è un link esterno (es. https://papers.miccai.org/...), usa il proxy
+    if (isAbsoluteHttp && !isBackend) {
+      return `/svc/api/pdf-proxy?url=${encodeURIComponent(url)}`;
+    }
+
+    // se è un URL del tuo backend, usalo diretto
+    return url;
+  }, [url]);
 
   /* ─── normalize highlights per pagina ─── */
 
@@ -133,6 +146,7 @@ export default function PdfViewer({
     setCurrentPage(controlledPage);
     scrollToPage(controlledPage, { behavior: "auto" });
     renderOnePage(controlledPage);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [controlledPage]);
 
   const matchesList = useMemo(() => {
@@ -149,7 +163,7 @@ export default function PdfViewer({
         });
       });
     }
-  
+
     // 🔽 Ordina per score decrescente, poi per pagina
     items.sort((a, b) => {
       const sa = typeof a.score === "number" ? a.score : -Infinity;
@@ -157,10 +171,9 @@ export default function PdfViewer({
       if (sa === sb) return a.page - b.page;
       return sb - sa;
     });
-  
+
     return items;
   }, [highlights]);
-  
 
   /* ─── load PDF ─── */
 
@@ -202,20 +215,21 @@ export default function PdfViewer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resolvedUrl]);
 
-  // Re-render tutte le pagine quando cambiano gli highlights o la scala
+  // Re-render tutte le pagine quando cambiano gli highlights, la scala base o lo zoom
   useEffect(() => {
     if (!pdfRef.current) return;
     renderAllPages();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scale, highlights]);
+  }, [scale, highlights, zoom]);
 
-  // ResizeObserver per fit-to-width
+  // ResizeObserver per fit-to-width (baseScale), poi applichiamo zoom sopra
   useEffect(() => {
     if (!containerRef.current || scale) return;
     const ro = new ResizeObserver(() => renderAllPages());
     ro.observe(containerRef.current);
     resizeObsRef.current = ro;
     return () => { try { ro.disconnect(); } catch {} };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scale]);
 
   /* ─── render ─── */
@@ -225,7 +239,7 @@ export default function PdfViewer({
     const container = containerRef.current;
     if (!pdf || !container) return;
 
-    // versione per-pagina (non invalida le altre)  ⟵ FIX
+    // versione per-pagina (non invalida le altre)
     const v = (pageVersionRef.current[p] = (pageVersionRef.current[p] || 0) + 1);
 
     // assicurati che il canvas esista
@@ -240,7 +254,15 @@ export default function PdfViewer({
     if (v !== pageVersionRef.current[p]) return;
 
     const unscaled = pdfPage.getViewport({ scale: 1 });
-    const effScale = Number(scale) > 0 ? Number(scale) : (container.clientWidth / unscaled.width);
+
+    // scala “base” (fit-to-width) → poi moltiplicata per zoom
+    const baseScale =
+      Number(scale) > 0
+        ? Number(scale)
+        : container.clientWidth / unscaled.width;
+
+    const effScale = baseScale * zoom;
+
     const dpr = window.devicePixelRatio || 1;
 
     const viewport = pdfPage.getViewport({ scale: effScale });
@@ -294,12 +316,11 @@ export default function PdfViewer({
     const pdf = pdfRef.current;
     if (!pdf) return;
     for (let p = 1; p <= pdf.numPages; p++) {
-      // render sequenziale ma senza invalidarsi a vicenda
       await renderOnePage(p);
     }
   }
 
-  /* ─── navigation ─── */
+  /* ─── navigation & zoom ─── */
 
   function firstMatchPage(map) {
     for (const [p, rects] of map.entries()) {
@@ -326,76 +347,170 @@ export default function PdfViewer({
   const hasPrev = currentPage > 1;
   const hasNext = currentPage < numPages;
 
+  function handleZoomIn() {
+    setZoom((z) => clampZoom(z + ZOOM_STEP));
+  }
+
+  function handleZoomOut() {
+    setZoom((z) => clampZoom(z - ZOOM_STEP));
+  }
+
+  function setZoomPercent(value) {
+    setZoom(() => clampZoom(value / 100));
+    setShowZoomMenu(false);
+  }
+
+  // pinch-to-zoom sul trackpad: wheel con ctrlKey o metaKey
+  function handleWheel(e) {
+    if (!e.ctrlKey && !e.metaKey) return; // normale scroll, lascia stare
+    e.preventDefault();
+
+    const delta = -e.deltaY; // verso su = zoom in
+    const factor = delta > 0 ? (1 + ZOOM_STEP) : (1 - ZOOM_STEP / (1 + ZOOM_STEP)); // bilanciato
+
+    setZoom((z) => clampZoom(z * factor));
+  }
+
+  const zoomPercent = Math.round(zoom * 100);
+
+  const rootClass = showMatchesList ? styles.root : `${styles.root} ${styles.rootNoSidebar}`;
+
   /* ─── UI ─── */
 
   return (
     <div
       ref={outerRef}
-      style={{
-        display: "grid",
-        gridTemplateColumns: showMatchesList ? "1fr 260px" : "1fr",
-        gap: 12,
-        width: "100%",
-      }}
+      className={rootClass}
     >
       {/* Viewer */}
-      <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
+      <div className={styles.viewer}>
         {/* Toolbar */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            padding: "8px 10px",
-            background: "#f6f7fb",
-            borderRadius: 10,
-            marginBottom: 8,
-          }}
-        >
-          <button
-            disabled={!hasPrev}
-            onClick={() => {
-              const p = Math.max(1, currentPage - 1);
-              setCurrentPage(p);
-              scrollToPage(p);
-            }}
-          >
-            ‹
-          </button>
+        <div className={styles.toolbar}>
+          <div className={styles.navGroup}>
+            <button
+              className={styles.navBtn}
+              disabled={!hasPrev}
+              onClick={() => {
+                const p = Math.max(1, currentPage - 1);
+                setCurrentPage(p);
+                scrollToPage(p);
+              }}
+            >
+              ‹
+            </button>
+          </div>
 
-          <div style={{ flex: 1, textAlign: "center" }}>
+          <div className={styles.pageInfo}>
             {isLoading ? "Loading…" : `Page ${currentPage} / ${numPages || "?"}`}
           </div>
 
-          <button
-            disabled={!hasNext}
-            onClick={() => {
-              const p = Math.min(numPages, currentPage + 1);
-              setCurrentPage(p);
-              scrollToPage(p);
-            }}
-          >
-            ›
-          </button>
+          <div className={styles.zoomGroup}>
+            <button
+              type="button"
+              className={styles.zoomBtn}
+              onClick={handleZoomOut}
+              disabled={zoom <= ZOOM_MIN + 0.01}
+            >
+              −
+            </button>
+
+            {/* Percentuale cliccabile */}
+            <button
+              type="button"
+              className={styles.zoomDisplayBtn}
+              onClick={() => setShowZoomMenu((v) => !v)}
+              title="Change zoom"
+            >
+              {zoomPercent}%
+            </button>
+
+            {/* Menu a tendina */}
+            {showZoomMenu && (
+              <div className={styles.zoomMenu}>
+                <button
+                  type="button"
+                  className={styles.zoomMenuItem}
+                  onClick={() => {
+                    setZoom(1); // relativo al fit-to-width
+                    setShowZoomMenu(false);
+                  }}
+                >
+                  Adapt (fit to width)
+                </button>
+
+                <button
+                  type="button"
+                  className={styles.zoomMenuItem}
+                  onClick={() => setZoomPercent(50)}
+                >
+                  50%
+                </button>
+
+                <button
+                  type="button"
+                  className={styles.zoomMenuItem}
+                  onClick={() => setZoomPercent(100)}
+                >
+                  100% (original size)
+                </button>
+
+                <button
+                  type="button"
+                  className={styles.zoomMenuItem}
+                  onClick={() => setZoomPercent(200)}
+                >
+                  200%
+                </button>
+
+                <button
+                  type="button"
+                  className={styles.zoomMenuItem}
+                  onClick={() => setZoomPercent(300)}
+                >
+                  300%
+                </button>
+              </div>
+            )}
+
+            <button
+              type="button"
+              className={styles.zoomBtn}
+              onClick={handleZoomIn}
+              disabled={zoom >= ZOOM_MAX - 0.01}
+            >
+              +
+            </button>
+          </div>
+
+          <div className={styles.navGroup}>
+            <button
+              className={styles.navBtn}
+              disabled={!hasNext}
+              onClick={() => {
+                const p = Math.min(numPages, currentPage + 1);
+                setCurrentPage(p);
+                scrollToPage(p);
+              }}
+            >
+              ›
+            </button>
+          </div>
         </div>
 
         {/* Pagine */}
         <div
           ref={containerRef}
-          style={{
-            width: "100%",
-            overflow: "auto",
-            border: "1px solid #ececec",
-            borderRadius: 10,
-            padding: 10,
-            background: "#fff",
-            maxHeight: "80vh",
-          }}
+          className={styles.pagesContainer}
+          onWheel={handleWheel}
         >
           {Array.from({ length: numPages || 0 }, (_, i) => {
             const p = i + 1;
             return (
-              <div id={`pdf-page-${p}`} key={p} style={{ marginBottom: 16 }}>
+              <div
+                id={`pdf-page-${p}`}
+                key={p}
+                className={styles.pageWrapper}
+              >
                 <canvas
                   ref={(el) => {
                     if (el) {
@@ -405,12 +520,7 @@ export default function PdfViewer({
                       delete pageCanvasesRef.current[p];
                     }
                   }}
-                  style={{
-                    width: "100%",
-                    borderRadius: 8,
-                    boxShadow: "0 1px 2px rgba(0,0,0,.04)",
-                    display: "block",
-                  }}
+                  className={styles.pageCanvas}
                 />
               </div>
             );
@@ -420,44 +530,34 @@ export default function PdfViewer({
 
       {/* Sidebar matches */}
       {showMatchesList && (
-        <aside
-          style={{
-            border: "1px solid #ececec",
-            borderRadius: 10,
-            padding: 10,
-            background: "#fff",
-            maxHeight: "80vh",
-            overflow: "auto",
-          }}
-        >
-          <h4>Matches ({matchesList.length})</h4>
-          {matchesList.map((m, i) => (
-            <button
-              key={m.key || i}
-              onClick={() => jumpToMatch(m)}
-              style={{
-                display: "block",
-                width: "100%",
-                textAlign: "left",
-                padding: "8px 10px",
-                marginBottom: 8,
-                borderRadius: 8,
-                background: m.page === currentPage ? "#f6f9ff" : "#fff",
-                border: "1px solid #eee",
-                cursor: "pointer",
-              }}
-            >
-              <div style={{ fontWeight: 600 }}>
-                {`Match ${i + 1}`}
-              </div>
-              <div style={{ fontSize: 12, color: "#666" }}>
-                Page {m.page}
-                {typeof m.score === "number"
-                  ? ` • Score ${m.score.toFixed(3)}`
-                  : ""}
-              </div>
-            </button>
-          ))}
+        <aside className={styles.sidebar}>
+          <h4 className={styles.sidebarTitle}>
+            Matches ({matchesList.length})
+          </h4>
+          {matchesList.map((m, i) => {
+            const active = m.page === currentPage;
+            return (
+              <button
+                key={m.key || i}
+                onClick={() => jumpToMatch(m)}
+                className={
+                  active
+                    ? `${styles.matchBtn} ${styles.matchBtnActive}`
+                    : styles.matchBtn
+                }
+              >
+                <div className={styles.matchTitle}>
+                  {`Match ${i + 1}`}
+                </div>
+                <div className={styles.matchMeta}>
+                  Page {m.page}
+                  {typeof m.score === "number"
+                    ? ` • Score ${m.score.toFixed(3)}`
+                    : ""}
+                </div>
+              </button>
+            );
+          })}
         </aside>
       )}
     </div>

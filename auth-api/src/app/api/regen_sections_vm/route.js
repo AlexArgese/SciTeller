@@ -127,27 +127,73 @@ function toOutlineMinimal(sections) {
 }
 
 function ensureParagraphsFromText(text) {
-  const t = (text || "").trim();
-  if (!t) return [];
-  const parts = t.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
-  if (parts.length) return parts;
-  // fallback: split su fine frase con maiuscola successiva
-  return t.split(/(?<=[.!?])\s+(?=[A-ZÀ-ÖØ-Ý])/).map((p) => p.trim()).filter(Boolean);
+  const s = (text || "").toString().replace(/\r\n/g, "\n").trim();
+  if (!s) return [];
+
+  // 1) blocchi separati da linee vuote
+  const blocks = s
+    .split(/\n{2,}|\r?\n\s*\r?\n/g)
+    .map(t => t.trim())
+    .filter(Boolean);
+
+  const paras = [];
+
+  for (const block of blocks) {
+    // se è già corto o contiene newline, tienilo così
+    if (block.length < 320 || /\n/.test(block)) {
+      paras.push(block);
+      continue;
+    }
+
+    // 2) split in frasi SENZA gruppi catturanti e senza ".Frase"
+    const sentences = block
+      .split(/(?<=[.!?])\s+(?=[A-ZÀ-ÖØ-Ý])/g)
+      .map(t => t.trim())
+      .filter(Boolean);
+
+    if (sentences.length <= 1) {
+      paras.push(block);
+      continue;
+    }
+
+    // 3) riaccorpa frasi in paragrafi ~2–3 frasi
+    let current = sentences[0];
+    for (let i = 1; i < sentences.length; i++) {
+      const next = sentences[i];
+      if ((current + " " + next).length <= 400) {
+        current = current + " " + next;
+      } else {
+        paras.push(current);
+        current = next;
+      }
+    }
+    if (current) paras.push(current);
+  }
+
+  return paras;
 }
+
 
 function adaptSectionPatch(patch, fallback) {
   const raw = (patch?.text ?? patch?.narrative ?? "").trim();
+  const patchParas = Array.isArray(patch?.paragraphs)
+    ? patch.paragraphs.map(p => (typeof p === "string" ? p.trim() : "")).filter(Boolean)
+    : [];
+
+  const usePatchParas = patchParas.length > 1; // usa quelli della VM solo se ha già fatto un vero split
+
   return {
     ...fallback,
     title: patch?.title ?? fallback?.title ?? "",
     text: raw,
     narrative: raw,
-    paragraphs: Array.isArray(patch?.paragraphs) && patch.paragraphs.length
-      ? patch.paragraphs
-      : ensureParagraphsFromText(raw),
+    paragraphs: usePatchParas
+      ? patchParas              // VM ha già split serio → tienilo
+      : ensureParagraphsFromText(raw), // altrimenti fai tu lo split “intelligente”
     visible: fallback?.visible !== false,
   };
 }
+
 function resolveBaseKnobs(meta = {}) {
   const up = meta.upstreamParams || {};
   const st = meta.storytellerParams || meta.storyteller_params || {};
@@ -328,7 +374,13 @@ export async function POST(req) {
     const temp = Number(bodyTop.temp ?? knobs.temp ?? prevUpstream.temp ?? 0.0);
     const top_p = Number(bodyTop.top_p ?? knobs.top_p ?? prevUpstream.top_p ?? 0.9);
     const lengthPreset = String(
-      bodyTop.length_preset ?? knobs.lengthPreset ?? prevUpstream.lengthPreset ?? "medium"
+      bodyTop.lengthPreset
+      ?? bodyTop.length_preset
+      ?? knobs.lengthPreset
+      ?? knobs.length_preset
+      ?? prevUpstream.lengthPreset
+      ?? prevUpstream.length_preset
+      ?? "medium"
     );
 
     // 4) payload per la VM

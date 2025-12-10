@@ -1,7 +1,7 @@
 /* SciTeller — StoryView (tipografia e sezioni) */
 :root {
   --navbar-h: 20vh; /* metti l'altezza reale della tua navbar */
-  --section-flash-bg: rgba(118, 118, 254, 0.252);
+  --section-flash-bg: color-mix(in oklab, var(--accent) 18%, transparent);
 }
 
 .title {
@@ -12,10 +12,12 @@
   color: var(--heading);
   text-align: center;
 }
-.sectionTitle{
+
+.sectionTitle {
   text-align: center;
   margin-top: 2em;
   margin-bottom: 1em;
+  color: var(--heading);
 }
 
 .section {
@@ -24,7 +26,7 @@
   scroll-margin-top: var(--navbar-h, 80px);
 }
 
-/* === EFFETTO FLASH GLOBALE (perché la classe viene aggiunta da Stories.jsx) === */
+/* === EFFETTO FLASH GLOBALE (classe aggiunta da Stories.jsx) === */
 :global(.sectionFlash) {
   position: relative;
   isolation: isolate; /* stacking context dedicato */
@@ -37,15 +39,21 @@
   border-radius: 12px;
   background: var(--section-flash-bg);
   pointer-events: none;
-  z-index: 1;                   /* sopra il background della section */
+  z-index: 1;
   animation: section-flash 1000ms ease-out; /* 1000ms = timer JS */
 }
 
-/* keyframes invariati (puoi tenerli locali) */
+/* keyframes */
 @keyframes section-flash {
-  0%   { opacity: 0; }
-  15%  { opacity: 1; }
-  100% { opacity: 0; }
+  0% {
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
 }
 
 /* Rispetta prefers-reduced-motion */
@@ -55,18 +63,25 @@
   }
 }
 
-.p { margin: 0 0 12px; text-align: justify;  }
+.p {
+  margin: 0 0 12px;
+  text-align: justify;
+  color: var(--text);
+}
+
 .pSelectable {
   position: relative;
   border-radius: 8px;
   padding: 2px 4px;
-  transition: background var(--dur-2) var(--ease-emph), box-shadow var(--dur-2) var(--ease-emph);
+  transition:
+    background var(--dur-2) var(--ease-emph),
+    box-shadow var(--dur-2) var(--ease-emph);
 }
 
 .pSelectable::before {
   content: "";
   position: absolute;
-  inset: -4px; /* controlla lo spazio attorno al testo */
+  inset: -4px;
   border-radius: 10px;
   background: transparent;
   transition: background var(--dur-2) var(--ease-emph);
@@ -74,35 +89,38 @@
 }
 
 .pSelectable:not(.pActive):hover::before {
-  background: var(--glass-bg);
+  background: color-mix(in oklab, var(--panel) 88%, var(--glass-bg) 12%);
   box-shadow: var(--glass-sd);
 }
 
 .pActive::before {
-  background: color-mix(in oklab, var(--accent) 12%, #fff);
+  background: color-mix(in oklab, var(--accent) 14%, var(--panel) 86%);
   box-shadow: var(--glass-sd);
 }
 
-.pIndex { display: inline-block; font-size: var(--fs-small); font-weight: 700; color: var(--text-2); margin-right: .5em; }
+.pIndex {
+  display: inline-block;
+  font-size: var(--fs-small);
+  font-weight: 700;
+  color: var(--text-2);
+  margin-right: 0.5em;
+}
 
 .sectionActive {
-  outline: 2px solid rgba(99, 102, 241, 0.6); 
+  outline: 2px solid color-mix(in oklab, var(--accent) 60%, transparent);
   border-radius: 10px;
 }
-section[aria-busy="true"] {
-  opacity: .85;
-}
 
-/* StoryView.module.css */
+/* Busy */
 .section[aria-busy="true"] {
-  opacity: .85;
+  opacity: 0.85;
 }
 .section[aria-busy="true"] * {
   pointer-events: none;
 }
 
 /* Badge conteggio varianti a destra del paragrafo */
-.variantBadge{
+.variantBadge {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -114,13 +132,13 @@ section[aria-busy="true"] {
   font-size: 12px;
   font-weight: 800;
   color: var(--heading);
-  background: color-mix(in oklab, var(--accent) 12%, #fff);
+  background: color-mix(in oklab, var(--accent) 12%, var(--panel));
   border: 1px dashed color-mix(in oklab, var(--accent) 26%, var(--line-0));
   box-shadow: var(--glass-sd);
 }
 
 /* Contenitore “glass” per varianti del paragrafo selezionato */
-.svAltPanel{
+.svAltPanel {
   margin-top: 12px;
   padding: 12px;
   background: var(--glass-bg);
@@ -132,25 +150,25 @@ section[aria-busy="true"] {
 }
 
 /* Header panel (titolo + azioni) */
-.svAltHeader{
+.svAltHeader {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
   margin-bottom: 8px;
 }
-.svAltTitle{
+.svAltTitle {
   font-weight: 800;
   color: var(--heading);
   font-family: var(--font-serif);
 }
-.svAltHint{
+.svAltHint {
   color: var(--text-2);
   font-size: 12.5px;
 }
 
 /* Riga azioni coerente con CP */
-.svActionsRow{
+.svActionsRow {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -159,30 +177,30 @@ section[aria-busy="true"] {
 }
 
 /* Carosello orizzontale */
-.svCarouselHost{
+.svCarouselHost {
   overflow: auto;
-  padding-bottom: 2px; /* per non “toccare” la scrollbar */
+  padding-bottom: 2px;
   scroll-behavior: smooth;
 }
-.svCarouselTrack{
+.svCarouselTrack {
   display: flex;
   gap: 10px;
   padding: 2px;
 }
 
 /* Card variante */
-.svCardAlt{
+.svCardAlt {
   min-width: 260px;
   max-width: 420px;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
 
-  background: #fff;
+  background: color-mix(in oklab, var(--panel) 94%, var(--bg) 6%);
   border: 1px solid var(--line-0);
   border-radius: 12px;
   padding: 10px;
-  box-shadow: 0 1px 2px rgba(0,0,0,.06);
+  box-shadow: var(--shadow-1);
 
   cursor: pointer;
   transition:
@@ -190,37 +208,37 @@ section[aria-busy="true"] {
     box-shadow var(--dur-2) var(--ease-emph),
     border-color var(--dur-2) var(--ease-emph);
 }
-.svCardAlt:hover{
+.svCardAlt:hover {
   transform: translateY(-1px);
-  box-shadow: 0 6px 16px rgba(0,0,0,.08);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.08);
   border-color: color-mix(in oklab, var(--accent) 22%, var(--line-0));
 }
-.svCardAlt:focus-visible{
+.svCardAlt:focus-visible {
   outline: 0;
   box-shadow: 0 0 0 4px color-mix(in oklab, var(--accent) 18%, transparent);
 }
-.svCardAltActive{
+.svCardAltActive {
   outline: 2px solid var(--accent);
   box-shadow: 0 6px 22px color-mix(in oklab, var(--accent) 18%, transparent);
 }
 
-.svCardAltBody{
+.svCardAltBody {
   display: grid;
   grid-template-columns: auto 1fr;
   gap: 8px;
 }
-.svCardAltIndex{
+.svCardAltIndex {
   font-weight: 800;
   color: var(--text-2);
 }
-.svCardAltText{
+.svCardAltText {
   white-space: pre-wrap;
   line-height: 1.35;
-  color: var(--text-1);
+  color: var(--text);
 }
 
-/* Azioni card (Copy / Apply) — riuso stile “ghost/primary” */
-.svCardAltActions{
+/* Azioni card (Copy / Apply) */
+.svCardAltActions {
   display: flex;
   gap: 8px;
   justify-content: flex-end;
@@ -228,109 +246,118 @@ section[aria-busy="true"] {
 }
 
 /* Storico varianti (batch precedenti) */
-.svHistoryBox{ margin-top: 14px; }
+.svHistoryBox {
+  margin-top: 14px;
+}
 
-.svHistoryList{
+.svHistoryList {
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
 
-.svHistoryBatch{
+.svHistoryBatch {
   border: 1px dashed var(--line-0);
   border-radius: 12px;
-  background: rgba(255,255,255,.58);
+  background: color-mix(in oklab, var(--panel) 90%, var(--bg) 10%);
   -webkit-backdrop-filter: blur(4px);
   backdrop-filter: blur(4px);
   padding: 10px;
   box-shadow: var(--glass-sd);
 }
 
-.svHistoryHeader{
+.svHistoryHeader {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
   margin-bottom: 8px;
 }
-.svHistoryMeta{
+.svHistoryMeta {
   color: var(--text-2);
   font-size: 12.5px;
 }
-.svHistoryCount{
+.svHistoryCount {
   color: var(--text-2);
   font-size: 12.5px;
 }
 
 /* griglia carte varianti nello storico */
-.svHistoryVariants{
+.svHistoryVariants {
   display: grid;
   grid-template-columns: 1fr;
   gap: 8px;
 }
-@media (min-width: 820px){
-  .svHistoryVariants{ grid-template-columns: 1fr 1fr; }
+@media (min-width: 820px) {
+  .svHistoryVariants {
+    grid-template-columns: 1fr 1fr;
+  }
 }
 
-.svHistoryCard{
-  background: #fff;
+.svHistoryCard {
+  background: color-mix(in oklab, var(--panel) 94%, var(--bg) 6%);
   border: 1px solid var(--line-0);
   border-radius: 12px;
   padding: 10px;
-  box-shadow: 0 1px 2px rgba(0,0,0,.06);
+  box-shadow: var(--shadow-1);
 }
-.svHistoryText{
+.svHistoryText {
   white-space: pre-wrap;
   line-height: 1.35;
-  color: var(--text-1);
+  color: var(--text);
   margin-bottom: 8px;
 }
-.svHistoryActions{
+.svHistoryActions {
   display: flex;
   gap: 8px;
   justify-content: flex-end;
 }
 
 /* Bottoni “secondary” coerenti con ghost/neutral del CP */
-.secondary{
+.secondary {
   appearance: none;
   height: 34px;
   border-radius: 12px;
   border: 1px solid var(--line-0);
-  background: #fff;
+  background: color-mix(in oklab, var(--panel) 94%, var(--bg) 6%);
   padding: 6px 12px;
   font: inherit;
-  color: var(--text-1);
+  color: var(--text);
   cursor: pointer;
   transition:
     transform var(--dur-2) var(--ease-emph),
     box-shadow var(--dur-2) var(--ease-emph),
     background var(--dur-2) var(--ease-emph),
     border-color var(--dur-2) var(--ease-emph);
-  box-shadow: 0 0 0 0 rgba(0,0,0,0);
+  box-shadow: 0 0 0 0 rgba(0, 0, 0, 0);
 }
-.secondary:hover{
+.secondary:hover {
   transform: translateY(-1px);
-  background: color-mix(in oklab, var(--panel) 94%, transparent);
+  background: color-mix(in oklab, var(--panel) 90%, var(--accent) 6%);
   border-color: color-mix(in oklab, var(--accent) 26%, var(--line-0));
-  box-shadow: 0 6px 18px -10px rgba(0,0,0,.18);
+  box-shadow: 0 6px 18px -10px rgba(0, 0, 0, 0.18);
 }
-.secondary:active{
+.secondary:active {
   transform: translateY(0);
-  box-shadow: 0 3px 10px -8px rgba(0,0,0,.18);
+  box-shadow: 0 3px 10px -8px rgba(0, 0, 0, 0.18);
 }
-.secondary:focus-visible{
+.secondary:focus-visible {
   outline: 0;
   box-shadow: 0 0 0 4px color-mix(in oklab, var(--accent) 18%, transparent);
 }
 
 /* Ridotta animazione */
-@media (prefers-reduced-motion: reduce){
-  .svCardAlt, .secondary{ transition: none; }
+@media (prefers-reduced-motion: reduce) {
+  .svCardAlt,
+  .secondary {
+    transition: none;
+  }
 }
 
-/* — Carosello inline minimal che rimpiazza il <p> selezionato — */
-.inlineCarousel{
+/* — Carosello inline che rimpiazza il <p> selezionato — */
+.inlineCarousel {
+  position: relative;
+  z-index: 1;
   display: grid;
   grid-template-columns: auto 1fr auto;
   align-items: center;
@@ -338,10 +365,10 @@ section[aria-busy="true"] {
   padding: 4px 0;
 }
 
-.navBtn{
+.navBtn,
+.navBtnLeft {
   appearance: none;
   background: var(--glass-blue-bg);
-  border-radius: 0px 99px 99px 0;
   width: 36px;
   min-width: 36px;
   height: 36px;
@@ -349,93 +376,83 @@ section[aria-busy="true"] {
   font-weight: 800;
   cursor: pointer;
   box-shadow: var(--glass-blue-sd);
-  transition: transform var(--dur-2) var(--ease-emph), box-shadow var(--dur-2) var(--ease-emph), border-color var(--dur-2) var(--ease-emph);
-  color: #fff;
+  transition:
+    transform var(--dur-2) var(--ease-emph),
+    box-shadow var(--dur-2) var(--ease-emph),
+    border-color var(--dur-2) var(--ease-emph);
+  color: var(--bg);
+  border: none;
 }
-.navBtnLeft{
-  appearance: none;
-  background: var(--glass-blue-bg);
-  border-radius: 99px 0px 0px 99px;
-  width: 36px;
-  min-width: 36px;
-  height: 36px;
-  font: inherit;
-  font-weight: 800;
-  cursor: pointer;
-  box-shadow: var(--glass-blue-sd);
-  transition: transform var(--dur-2) var(--ease-emph), box-shadow var(--dur-2) var(--ease-emph), border-color var(--dur-2) var(--ease-emph);
-  color: #fff;
+.navBtn {
+  border-radius: 0 99px 99px 0;
 }
-.navBtn:hover{
+.navBtnLeft {
+  border-radius: 99px 0 0 99px;
+}
+
+.navBtn:hover,
+.navBtnLeft:hover {
   transform: translateY(-1px);
-  border-color: color-mix(in oklab, var(--accent) 26%, var(--line-0));
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.16);
 }
-.navBtn:focus-visible{
+.navBtn:focus-visible,
+.navBtnLeft:focus-visible {
   outline: 0;
   box-shadow: 0 0 0 4px color-mix(in oklab, var(--accent) 18%, transparent);
 }
 
-.inlineCard{
-  background: #fff;
+/* Card inline */
+.inlineCard {
+  position: relative;
+  background: color-mix(in oklab, var(--panel) 94%, var(--bg) 6%);
   border: 1px dashed var(--line-0);
   border-radius: 12px;
   padding: 10px 12px;
-  box-shadow: 0 1px 2px rgba(0,0,0,.06);
+  box-shadow: var(--shadow-1);
   cursor: pointer;
-  transition: transform var(--dur-2) var(--ease-emph), box-shadow var(--dur-2) var(--ease-emph), border-color var(--dur-2) var(--ease-emph);
+  transition:
+    transform var(--dur-2) var(--ease-emph),
+    box-shadow var(--dur-2) var(--ease-emph),
+    border-color var(--dur-2) var(--ease-emph);
 }
-.inlineCard:hover{
+.inlineCard:hover {
   transform: translateY(-1px);
-  box-shadow: 0 6px 16px rgba(0,0,0,.08);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.08);
   border-color: color-mix(in oklab, var(--accent) 22%, var(--line-0));
 }
-.inlineIndex{
+.inlineIndex {
   font-size: 12.5px;
   color: var(--text-2);
   margin-bottom: 6px;
   font-weight: 700;
 }
-.inlineText{
+.inlineText {
   white-space: pre-wrap;
   line-height: 1.35;
-  color: var(--text-1);
+  color: var(--text);
 }
 
-.paraBusyCard{
+/* Card loading paragrafo */
+.paraBusyCard {
   display: grid;
   grid-template-columns: 72px 1fr;
   align-items: center;
   gap: 10px;
-  background: #fff;
+  background: color-mix(in oklab, var(--panel) 94%, var(--bg) 6%);
   border-radius: 12px;
   padding: 8px 10px;
   box-shadow: var(--glass-sd);
-  margin:1em 0
+  margin: 1em 0;
 }
-.paraBusyText{
+.paraBusyText {
   color: var(--text-2);
   font-size: 13px;
   line-height: 1.35;
 }
+
 /* ——— Badge di selezione: nascosto OVUNQUE per default ——— */
 .selectBadge {
   display: none;
-}
-
-/* ——— Layout base del carosello e della card ——— */
-.inlineCarousel {
-  position: relative;
-  z-index: 1;
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  align-items: center;
-}
-.inlineCard {
-  position: relative;
-  border-radius: 10px;
-  padding: 12px 14px 14px;
-  box-shadow: 0 1px 3px rgba(0,0,0,.08);
-  cursor: pointer;
 }
 
 /* ——— Badge visibile SOLO dentro il carosello ——— */
@@ -457,21 +474,21 @@ section[aria-busy="true"] {
   font-weight: 700;
   line-height: 1;
 
-  background: rgba(0,0,0,.06);
-  color: inherit;
-  box-shadow: 0 1px 2px rgba(0,0,0,.08);
-  z-index: 2; /* sopra al testo della card */
+  background: color-mix(in oklab, var(--panel) 88%, var(--bg) 12%);
+  color: var(--text);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  z-index: 2;
 }
 
 .inlineCarousel .inlineCard .selectBadge:hover {
-  background: rgba(0,0,0,.10);
+  background: color-mix(in oklab, var(--panel) 82%, var(--accent) 12%);
 }
 .inlineCarousel .inlineCard .selectBadge:active {
   transform: translateY(1px);
 }
 
-/* Stato attivo (se vuoi evidenziarlo in verde) */
+/* Stato attivo (selezionata) */
 .inlineCarousel .inlineCard .selectBadge.isActive {
-  background: #16a34a;
-  color: #fff;
+  background: var(--success);
+  color: var(--bg);
 }

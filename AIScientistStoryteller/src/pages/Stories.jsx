@@ -1,6 +1,6 @@
 // FILE: AIScientistStoryteller/src/pages/Stories.jsx
 import { useEffect, useMemo, useState, useRef, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import Sidebar from "../components/Sidebar.jsx";
 import StoryView from "../components/StoryView.jsx";
 import ControlPanel from "../components/ControlPanel.jsx";
@@ -156,6 +156,7 @@ function lastBatchObjectsForSelection(story, variantHistory, selectedParagraph) 
 
 export default function Stories(){
   const navigate = useNavigate();
+  const location = useLocation();
   /* ---------- STATE & REFS (dichiarati prima dell’uso) ---------- */
   const [stories, setStories] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
@@ -256,7 +257,9 @@ export default function Stories(){
       try {
         const list = await getStories();
         setStories(list);
-        const firstId = list[0]?.id ?? null;
+        const fromState = location.state?.selectedStoryId || null;
+        const existsInList = fromState && list.some(s => s.id === fromState);
+        const firstId = existsInList ? fromState : (list[0]?.id ?? null);
         setSelectedId(firstId);
         if (firstId) {
           const full = await getStory(firstId);
@@ -647,53 +650,43 @@ async function refreshVariantsForSelection(story, sectionId, paragraphIndex, for
         const prevMeta   = st?.meta || {};
 
         // 1) 
+        const serverUp = (serverMeta && serverMeta.upstreamParams) || {};
+
         const mergedUpstream = {
+          // 👇 tieni i knob globali così come erano (temp / lengthPreset / top_p)
           ...oldUp,
-          temp: knobs.temp,                       // ⬅️ forza il nuovo 0.7
-          lengthPreset: knobs.lengthPreset,       // ⬅️ forza il nuovo "short"
-          top_p: knobs.top_p,
-          ...(serverMeta?.upstreamParams && typeof serverMeta.upstreamParams === "object"
-            ? {
-                ...(serverMeta.upstreamParams.retriever       != null ? { retriever: serverMeta.upstreamParams.retriever } : {}),
-                ...(serverMeta.upstreamParams.retriever_model != null ? { retriever_model: serverMeta.upstreamParams.retriever_model } : {}),
-                ...(serverMeta.upstreamParams.k               != null ? { k: serverMeta.upstreamParams.k } : {}),
-                ...(serverMeta.upstreamParams.max_ctx_chars   != null ? { max_ctx_chars: serverMeta.upstreamParams.max_ctx_chars } : {}),
-                ...(serverMeta.upstreamParams.seg_words       != null ? { seg_words: serverMeta.upstreamParams.seg_words } : {}),
-                ...(serverMeta.upstreamParams.overlap_words   != null ? { overlap_words: serverMeta.upstreamParams.overlap_words } : {}),
-              }
-            : {}),
+          // 👇 ma permetti al backend di aggiornare SOLO i knob di retrieval
+          ...(serverUp.retriever       !== undefined ? { retriever: serverUp.retriever }       : {}),
+          ...(serverUp.retriever_model !== undefined ? { retriever_model: serverUp.retriever_model } : {}),
+          ...(serverUp.k               !== undefined ? { k: serverUp.k }                       : {}),
+          ...(serverUp.max_ctx_chars   !== undefined ? { max_ctx_chars: serverUp.max_ctx_chars }     : {}),
+          ...(serverUp.seg_words       !== undefined ? { seg_words: serverUp.seg_words }             : {}),
+          ...(serverUp.overlap_words   !== undefined ? { overlap_words: serverUp.overlap_words }     : {}),
         };
 
         // 2) lastPartialRegen: questo invece è SEMPRE quello nuovo
-        const lastPartialRegen = {
-          targets: sectionIds,
-          lengthPreset: knobs.lengthPreset,
-          temp: knobs.temp,
-          at: new Date().toISOString(),
-        };
-
         const mergedMeta = {
           ...prevMeta,
           ...serverMeta,
           upstreamParams: mergedUpstream,
-          lastPartialRegen,
+          lastPartialRegen: {
+            ...(serverMeta?.lastPartialRegen || {}),
+            ...(knobs.lengthPreset != null ? { lengthPreset: knobs.lengthPreset } : {}),
+            ...(typeof knobs.temp === "number" ? { temp: knobs.temp } : {}),
+          },
         };
 
         const withMerged = {
           ...updatedFromServer,
+          // 👇 mergedMeta contiene già currentAggregates dal backend
           meta: mergedMeta,
         };
-        const aggregates = deriveAggregatesFromSections(withMerged.sections, mergedMeta.upstreamParams || {});
-        withMerged.meta = {
-          ...withMerged.meta,
-          currentAggregates: aggregates,
-        };
 
-        // ricarica versions
         let versions = [];
         try {
           versions = await getRevisions(st.id);
         } catch {}
+
 
         const withVersions = {
           ...withMerged,
@@ -723,7 +716,7 @@ async function refreshVariantsForSelection(story, sectionId, paragraphIndex, for
     }
 
 
-    if (patch?._action === "regen_paragraph_vm") {
+        if (patch?._action === "regen_paragraph_vm") {
       const st = selectedStory;
       if (!st) return;
 
@@ -748,7 +741,6 @@ async function refreshVariantsForSelection(story, sectionId, paragraphIndex, for
         st?.defaultVersionId ||
         null;
 
-      closeCPOnAsyncStart();
       const k = paraKey(sectionId, paragraphIndex);
       setBusyParagraphKeys(prev => Array.from(new Set([ ...prev, k ])));
 
@@ -763,87 +755,124 @@ async function refreshVariantsForSelection(story, sectionId, paragraphIndex, for
           ops,
           ...(baseRevisionId ? { baseRevisionId } : {}),
           notes: patch?.notes || "",
-        });        
+        });
+
+        // useremo questi per aprire correttamente il carosello
+        let storyAfterRegen = null;
+        let newRevisionId = baseRevisionId || null;
 
         // A) backend ritorna la story già aggiornata
         if (res && Array.isArray(res.sections)) {
-          const aggregates = deriveAggregatesFromSections(
-            res.sections,
-            (res.meta && res.meta.upstreamParams) || (st.meta && st.meta.upstreamParams) || {}
-          );
-          const resWithAgg = {
-            ...res,
-            meta: {
-              ...(res.meta || {}),
-              currentAggregates: aggregates,
-            },
-          };
           let versions = [];
           try { versions = await getRevisions(st.id); } catch {}
           const withVersions = {
-            ...resWithAgg,
+            ...res,
             versions,
-            defaultVersionId: resWithAgg?.current_revision_id || null,
+            defaultVersionId: res?.current_revision_id || null,
           };
           setStories(prev => prev.map(s => (s.id === withVersions.id ? withVersions : s)));
           if (withVersions?.current_revision_id) {
-             setActiveRevisionId(withVersions.current_revision_id);
+            setActiveRevisionId(withVersions.current_revision_id);
+            newRevisionId = withVersions.current_revision_id;
           }
 
-          // aggiorna storico varianti
-          await refreshVariantsForSelection(withVersions, sectionId, paragraphIndex);
+          storyAfterRegen = withVersions;
+
+          // aggiorna storico varianti su QUESTA nuova revisione
+          await refreshVariantsForSelection(
+            withVersions,
+            sectionId,
+            paragraphIndex,
+            newRevisionId
+          );
         }
-        // B) backend ritorna solo alternative → applica la prima e salva
+
+        // B) backend ritorna solo alternative → NON applicare subito la prima,
+        // lascia che sia l’utente a scegliere dal carosello.
         else if (Array.isArray(res?.alternatives) && res.alternatives.length) {
-          const choice = res.alternatives[0];
-          const localApplied = applyParagraphReplacement(st, {
-            sectionId, paragraphIndex, newText: String(choice || paragraphText),
-          });
-          if (localApplied) {
-            const secIdx = sectionIndexById(localApplied, sectionId);
-            let nextSections = localApplied.sections;
-            if (secIdx >= 0) {
-              nextSections = [...nextSections];
-              nextSections[secIdx] = recomputeSectionFromParagraphs(nextSections[secIdx]);
-            }
-            const aggregates = deriveAggregatesFromSections(
-              nextSections,
-              (st.meta && st.meta.upstreamParams) || {}
-            );
-            const saved = await updateStory(st.id, {
-              sections: nextSections,
-              meta: {
-                ...(st.meta || {}),
-                upstreamParams: {
-                  ...((st.meta && st.meta.upstreamParams) || {}),
-                  mode: "regen_paragraph_vm",
-                },
-                currentAggregates: aggregates,
+          // costruisco una story "locale" con le alternative nel meta
+          const local = {
+            ...st,
+            meta: {
+              ...(st.meta || {}),
+              lastParagraphEdit: {
+                storyId: st.id,
+                sectionId,
+                sectionIndex: sectionIndexById(st, sectionId),
+                paragraphIndex,
+                candidates: res.alternatives,
               },
-              ...(patch.baseRevisionId ? { baseRevisionId: patch.baseRevisionId } : {}),
-              ...(patch?.notes ? { notes: patch.notes } : {}),
-            });
-            let versions = [];
-            try { versions = await getRevisions(st.id); } catch {}
-            const withVersions = {
-              ...saved,
-              versions,
-              defaultVersionId: saved?.current_revision_id || null,
-            };
-            setStories(prev => prev.map(s => (s.id === withVersions.id ? withVersions : s)));
+            },
+          };
 
-            await refreshVariantsForSelection(withVersions, sectionId, paragraphIndex);
+          storyAfterRegen = local;
+          newRevisionId =
+            activeRevisionId ||
+            st?.current_revision_id ||
+            st?.defaultVersionId ||
+            baseRevisionId ||
+            null;
+
+          // salvo solo il meta per tracciare l’operazione, senza cambiare il testo
+          const saved = await updateStory(st.id, {
+            meta: local.meta,
+            ...(patch.baseRevisionId ? { baseRevisionId: patch.baseRevisionId } : {}),
+            ...(patch?.notes ? { notes: patch.notes } : {}),
+          });
+
+          let versions = [];
+          try { versions = await getRevisions(st.id); } catch {}
+          const withVersions = {
+            ...saved,
+            versions,
+            defaultVersionId: saved?.current_revision_id || null,
+          };
+          setStories(prev => prev.map(s => (s.id === withVersions.id ? withVersions : s)));
+          if (withVersions?.current_revision_id) {
+            setActiveRevisionId(withVersions.current_revision_id);
+            newRevisionId = withVersions.current_revision_id;
           }
+
+          storyAfterRegen = withVersions;
+
+          await refreshVariantsForSelection(
+            withVersions,
+            sectionId,
+            paragraphIndex,
+            newRevisionId
+          );
         }
 
-        // mantieni selezione per vedere le varianti
-        setSelectedSectionId(sectionId);
-        setSelectedParagraph({ sectionId, index: paragraphIndex, text: paragraphText });
+        // 👉 se ho una story su cui basarmi, apro SELEZIONE + CAROSELLO
+        if (storyAfterRegen) {
+          const secIdx = sectionIndexById(storyAfterRegen, sectionId);
+          let newText = paragraphText;
+          if (
+            secIdx >= 0 &&
+            Array.isArray(storyAfterRegen.sections?.[secIdx]?.paragraphs)
+          ) {
+            newText =
+              storyAfterRegen.sections[secIdx].paragraphs[paragraphIndex] ??
+              paragraphText;
+          }
+
+          setSelectedSectionId(sectionId);
+          setSelectedParagraph({
+            sectionId,
+            index: paragraphIndex,
+            text: String(newText || ""),
+            clickedRevisionId: newRevisionId,
+          });
+
+          // apri SUBITO il pannello in modalità "paragraph"
+          setCpStage("paragraph");
+          setOpenCP(true);
+        }
+
       } catch (err) {
         console.error("regen_paragraph_vm failed", err);
         alert(err?.message || "Error during paragraph regeneration.");
       } finally {
-        // ⬇️ Pulisci busy-paragrafo
         setBusyParagraphKeys(prev => prev.filter(x => x !== k));
         setAppliedOverrides({});
       }
@@ -1224,7 +1253,7 @@ async function locateSectionOnPaper({ story, sectionId, W = 3, topk = 8 }) {
       />
     );
   }
-
+  console.log("[Stories] selectedStory.sections as sent to StoryView:", selectedStory?.sections);
   return (
     <div
       className={`${styles.page} ${openCP ? styles.withPanel : styles.noPanel}`}

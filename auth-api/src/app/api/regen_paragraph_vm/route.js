@@ -10,6 +10,17 @@ const { paragraphVariantBatches, paragraphVariants, stories, storyRevisions } = 
 const REMOTE_GPU_URL = (process.env.REMOTE_GPU_URL || "").replace(/\/$/, "");
 const REMOTE_API_KEY = process.env.REMOTE_API_KEY || process.env.REMOTE_APIKEY || "";
 
+// ✅ Allunga i timeout HTTP di Undici anche per la rigenerazione di paragrafo
+import { setGlobalDispatcher, Agent } from "undici";
+
+setGlobalDispatcher(new Agent({
+  connect: { timeout: 60_000 },   // 60s per connettersi
+  headersTimeout: 600_000,        // 10 minuti per ricevere gli header
+  bodyTimeout: 0,                 // nessun timeout sul body
+  keepAliveTimeout: 120_000,
+}));
+
+
 /* -------------------- utils -------------------- */
 function clean(obj = {}) {
   return Object.fromEntries(
@@ -237,37 +248,71 @@ async function findRecentRevisionByFingerprint(storyId, fingerprint) {
   return null;
 }
 
-/* -------------------- helpers contenuto -------------------- */
+/* -------------------- helpers contenuto -------------------- 
 function splitIntoParagraphs(txt) {
   const s = (txt || "").toString().replace(/\r\n/g, "\n").trim();
   if (!s) return [];
-  let parts = s.split(/\n{2,}|\r?\n\s*\r?\n/g).map(t => t.trim()).filter(Boolean);
-  if (parts.length <= 1) {
-    parts = s
-      .split(/([.!?])\s+(?=[A-ZÀ-ÖØ-Ý])/g)
-      .reduce((acc, chunk, i, arr) => {
-        if (/[.!?]/.test(chunk) && arr[i + 1]) acc.push((arr[i - 1] || "") + chunk);
-        else if (i === arr.length - 1) acc.push(chunk);
-        return acc;
-      }, [])
+
+  // 1) blocchi separati da linee vuote
+  const blocks = s
+    .split(/\n{2,}|\r?\n\s*\r?\n/g)
+    .map(t => t.trim())
+    .filter(Boolean);
+
+  const paras = [];
+
+  for (const block of blocks) {
+    // se è già corto o contiene newline, tienilo così
+    if (block.length < 320 || /\n/.test(block)) {
+      paras.push(block);
+      continue;
+    }
+
+    // 2) split in frasi SENZA gruppi catturanti e senza ".Frase"
+    const sentences = block
+      .split(/(?<=[.!?])\s+(?=[A-ZÀ-ÖØ-Ý])/g)
       .map(t => t.trim())
       .filter(Boolean);
+
+    if (sentences.length <= 1) {
+      paras.push(block);
+      continue;
+    }
+
+    // 3) riaccorpa frasi in paragrafi ~2–3 frasi
+    let current = sentences[0];
+    for (let i = 1; i < sentences.length; i++) {
+      const next = sentences[i];
+      if ((current + " " + next).length <= 400) {
+        current = current + " " + next;
+      } else {
+        paras.push(current);
+        current = next;
+      }
+    }
+    if (current) paras.push(current);
   }
-  return parts;
+
+  return paras;
 }
 
+*/
 function normalizeSectionsForParagraphs(sectionsRaw = []) {
   return (sectionsRaw || []).map((sec, i) => {
     const text =
       (typeof sec?.text === "string" && sec.text) ||
       (typeof sec?.narrative === "string" && sec.narrative) ||
       "";
-    let paragraphs = Array.isArray(sec?.paragraphs) ? sec.paragraphs.filter(Boolean) : [];
-    if (paragraphs.length <= 1) {
-      const resplit = splitIntoParagraphs(text);
-      if (resplit.length) paragraphs = resplit;
+
+    // se paragraphs ci sono già li teniamo; altrimenti un unico blocco = tutto il testo
+    let paragraphs = Array.isArray(sec?.paragraphs)
+      ? sec.paragraphs.filter(Boolean)
+      : [];
+
+    if (paragraphs.length === 0 && text) {
+      paragraphs = [text];
     }
-    if (paragraphs.length === 0 && text) paragraphs = [text];
+
     return {
       ...sec,
       id: String(sec?.id ?? sec?.sectionId ?? i),
@@ -277,6 +322,7 @@ function normalizeSectionsForParagraphs(sectionsRaw = []) {
     };
   });
 }
+
 
 function rebuildPaperTextFromSections(sections = []) {
   return (sections || [])
@@ -336,9 +382,12 @@ export async function POST(req) {
   } else if (prevRev?.content && typeof prevRev.content === "string") {
     try { effContentObj = JSON.parse(prevRev.content); } catch { effContentObj = null; }
   }
-  const prevSectionsRaw = Array.isArray(effContentObj?.sections)
-    ? effContentObj.sections
-    : (Array.isArray(prevRev?.sections) ? prevRev.sections : []);
+
+  // 👇 PRIMA usa prevRev.sections (quelli “buoni”), poi content.sections come fallback
+  const prevSectionsRaw = Array.isArray(prevRev?.sections)
+    ? prevRev.sections
+    : (Array.isArray(effContentObj?.sections) ? effContentObj.sections : []);
+
   const normSections = normalizeSectionsForParagraphs(prevSectionsRaw);
 
   // mappa sectionId visibile -> indice
@@ -425,9 +474,13 @@ export async function POST(req) {
   // prepara payload per la VM
   const sectionObj = normSections[sectionIndex];
 
-  let paragraphs = Array.isArray(sectionObj?.paragraphs) && sectionObj.paragraphs.length > 0
+  /*let paragraphs = Array.isArray(sectionObj?.paragraphs) && sectionObj.paragraphs.length > 0
     ? sectionObj.paragraphs.filter(Boolean)
-    : splitIntoParagraphs(sectionObj?.text || sectionObj?.narrative || "");
+    : splitIntoParagraphs(sectionObj?.text || sectionObj?.narrative || "");*/
+  let paragraphs =
+    Array.isArray(sectionObj?.paragraphs) && sectionObj.paragraphs.length > 0
+      ? sectionObj.paragraphs.filter(Boolean)
+      : (sectionObj?.text ? [String(sectionObj.text).trim()] : []);
 
   if (paragraphIndex >= paragraphs.length) {
     paragraphIndex = Math.max(0, paragraphs.length - 1);
@@ -558,34 +611,65 @@ export async function POST(req) {
     };
   });
 
-  const nextContentObj = clean({
-    ...(effContentObj && typeof effContentObj === "object" ? effContentObj : {}),
-    sections: nextSections,
-    markdown: undefined,
-  });
-
   const userNotes = (typeof body?.notes === "string" && body.notes.trim())
     ? body.notes.trim()
     : null;
 
   const baseMeta = prevRev?.meta || {};
-  // normalizziamo i paragrafi di tutte le sezioni
+
+  // 1) normalizziamo i paragrafi per il calcolo
   const normalizedForAggregates = nextSections.map(sec => {
     const paras = (sec.paragraphs || []).map(p =>
-      typeof p === "string" ? { text: p } : p
+      typeof p === "string" ? { text: p } : (p || {})
     );
     return {
       ...sec,
-      paragraphs: paras
+      paragraphs: paras,
     };
   });
 
-  // compute senza forzare default 0/medium
-  const currentAggregates = computeAggregatesFromSections(normalizedForAggregates, {
+  // 2) calcoliamo i knob base (come negli altri helper)
+  const { baseLen, baseTemp } = resolveBaseKnobs(baseMeta);
+
+  // 3) per OGNI sezione, calcola media su paragrafi e
+  //    scrivi temp / lengthPreset A LIVELLO DI SEZIONE
+  const sectionsWithKnobs = normalizedForAggregates.map((sec, idx) => {
+    const secBase = {
+      lengthPreset: sec.lengthPreset || baseLen,
+      temp: typeof sec.temp === "number" ? sec.temp : baseTemp,
+    };
+
+    if (
+      Array.isArray(sec.paragraphs) &&
+      sec.paragraphs.some(p => p && (p.temp != null || p.lengthPreset))
+    ) {
+      const { lengthLabel, avgTemp } = computeSectionAggregates(sec, secBase);
+      return {
+        ...nextSections[idx],       // tiene text/narrative/paragraphs come sopra
+        lengthPreset: lengthLabel,  // 👈 aggiorna knob sezione
+        temp: avgTemp,              // 👈 aggiorna knob sezione
+      };
+    }
+
+    // nessun paragrafo “ricco” → usa i knob di base
+    return {
+      ...nextSections[idx],
+      lengthPreset: secBase.lengthPreset,
+      temp: secBase.temp,
+    };
+  });
+
+  // 4) calcola gli aggregati di STORIA usando le sezioni aggiornate
+  const sectionsForAggregates = sectionsWithKnobs.map((sec) => ({
+    ...sec,
+    paragraphs: [],
+  }));
+
+  const currentAggregates = computeAggregatesFromSections(sectionsForAggregates, {
     ...baseMeta,
     upstreamParams: {
-      ...(baseMeta.upstreamParams || {})
-    }
+      ...(baseMeta.upstreamParams || {}),
+    },
   });
 
   const mergedMeta = clean({
@@ -607,6 +691,12 @@ export async function POST(req) {
     },
     ...(userNotes ? { notes: userNotes } : {}),
     ...(prevRev?.id ? { parentRevisionId: prevRev.id } : {}),
+  });
+
+  const nextContentObj = clean({
+    ...(effContentObj && typeof effContentObj === "object" ? effContentObj : {}),
+    sections: sectionsWithKnobs,
+    markdown: undefined,
   });
 
   const [inserted] = await db
@@ -665,6 +755,7 @@ export async function POST(req) {
 
   return NextResponse.json({
     ...materialize(updated, inserted),
+    alternatives,  
     lastParagraphVariantBatch: {
       id: batchId,
       sectionIndex,
