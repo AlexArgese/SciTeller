@@ -96,3 +96,16 @@ export const paragraphVariants = pgTable('paragraph_variants', {
   appliedRevisionId: text('applied_revision_id'),   
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
+
+export const papers = pgTable('papers', {
+  id: text('id').primaryKey(),
+  sourceType: text('source_type').notNull(),
+  url: text('url'),
+  filePath: text('file_path'),
+  sha256: text('sha256'),
+  doi: text('doi'),
+  title: text('title'),
+  firstAuthor: text('first_author'),
+  titleFirstNorm: text('title_first_norm'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+});
