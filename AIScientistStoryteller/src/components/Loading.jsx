@@ -26,7 +26,7 @@ export default function Loading({
 
   // NEW: finto progress iniziale (0–5% nei primi 4s)
   const FAKE_MAX_PCT = 5;        // arrivi a 5%
-  const FAKE_DURATION_MS = 4000; // in 4 secondi
+  const FAKE_DURATION_MS = 20000; // in 4 secondi
 
   const [fakePct, setFakePct] = useState(0); // NEW
 

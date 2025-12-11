@@ -331,15 +331,39 @@ export default function Home() {
 
 
   const attachExplainLogsSSE = (jobId) => {
-    try {
-      const url = `${API_BASE}/api/explain/logs?jobId=${encodeURIComponent(jobId)}`;
-      const es = new EventSource(url, { withCredentials: false });
-      sseRef.current = es;
-      es.onmessage = (ev) => {
-        if (ev?.data) handleBackendLog(ev.data);
-      };
-      es.onerror = () => { try { es.close(); } catch {} };
-    } catch {}
+    const url = `${API_BASE}/api/explain/logs?jobId=${encodeURIComponent(jobId)}`;
+    const es = new EventSource(url);
+
+    sseRef.current = es;
+
+    // Cattura TUTTI gli eventi, non solo message
+    es.onmessage = (ev) => {
+      if (ev.data) handleBackendLog(ev.data);
+    };
+
+    es.addEventListener("hello", (ev) => {
+      if (ev.data) handleBackendLog(ev.data);
+    });
+
+    es.addEventListener("splitter_start", (ev) => {
+      if (ev.data) handleBackendLog(ev.data);
+    });
+
+    es.addEventListener("story_start", (ev) => {
+      if (ev.data) handleBackendLog(ev.data);
+    });
+
+    es.addEventListener("story_progress", (ev) => {
+      if (ev.data) handleBackendLog(ev.data);
+    });
+
+    es.addEventListener("all_done", (ev) => {
+      if (ev.data) handleBackendLog(ev.data);
+    });
+
+    es.onerror = () => {
+      try { es.close(); } catch {}
+    };
   };
 
 
