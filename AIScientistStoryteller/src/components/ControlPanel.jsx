@@ -888,7 +888,7 @@ function StoryControls({
             <option>Student</option>
             <option>Journalist</option>
             <option>Policy Maker</option>
-            <option>Teacher</option>
+            <option>Professor</option>
             <option>Researchers & Engineers</option>
           </select>
         </div>
@@ -1404,7 +1404,7 @@ function InfoTab({
                         <div className={styles.kv}>
                           <div>
                             <Hint content="Repetition penalty: 1 − max trigram repetition. High values mean the story avoids repetitive phrasing and loops.">
-                              <span>No-loop</span>
+                              <span>No-redundancy</span>
                             </Hint>
                           </div>
                           <div className={styles.kvVal}>

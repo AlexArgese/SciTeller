@@ -9,7 +9,7 @@ const API_BASE = import.meta.env.VITE_API_BASE || "/svc";
 // ===== Personas (icone stilizzate + caption dinamica) =====
 const PERSONAS = [
   "General Public","Investor","Student","Journalist",
-  "Policy Maker","Teacher","Researchers & Engineers",
+  "Policy Maker","Professor","Researchers & Engineers",
 ];
 
 const PERSONA_META = {
@@ -18,7 +18,7 @@ const PERSONA_META = {
   "Student": { tone: "Simplified academic", context: "Educational use", Icon: StudentIcon },
   "Journalist": { tone: "Clear & news-oriented", context: "Media coverage", Icon: JournalistIcon },
   "Policy Maker": { tone: "Brief & evidence-based", context: "Policy implications", Icon: PolicyIcon },
-  "Teacher": { tone: "Didactic & structured", context: "Classroom explanation", Icon: TeacherIcon },
+  "Professor": { tone: "Didactic & structured", context: "Classroom explanation", Icon: TeacherIcon },
   "Researchers & Engineers": {
     tone: "Technical & rigorous",
     context: "Advanced research & implementation",
@@ -399,7 +399,7 @@ export default function Home() {
         return { ...base, preset: "medium", k: 4, max_ctx_chars: 2000, temperature: capTemp(0.5) };
       case "Policy Maker":
         return { ...base, preset: "medium", k: 5, max_ctx_chars: 2200, temperature: capTemp(0.4) };
-      case "Teacher":
+      case "Professor":
         return { ...base, preset: "long", k: 6, max_ctx_chars: 2600, temperature: capTemp(0.35) };
       case "Researchers & Engineers":
         return { ...base, preset: "long", k: 6, max_ctx_chars: 3000, temperature: capTemp(0.3) };    

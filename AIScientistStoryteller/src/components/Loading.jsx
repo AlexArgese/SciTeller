@@ -17,11 +17,45 @@ export default function Loading({
   timeline = [],
   currentStep = -1,
   inQueue = false,
-  progress = 0,
+  progress = 0, // 0–1 dal backend
 }) {
-  const pct = Math.round((progress || 0) * 100);
+  const REAL_PCT = Math.round((progress || 0) * 100);
+
   const TICK_MS = 2600;
   const PHASE_CHANGE_FREEZE_MS = 3200;
+
+  // NEW: finto progress iniziale (0–5% nei primi 4s)
+  const FAKE_MAX_PCT = 5;        // arrivi a 5%
+  const FAKE_DURATION_MS = 4000; // in 4 secondi
+
+  const [fakePct, setFakePct] = useState(0); // NEW
+
+  // NEW: ogni volta che il componente appare (mount) o quando "riparte"
+  // (ad es. progress torna a 0), fai ripartire la progress bar finta
+  useEffect(() => {
+    // reset
+    setFakePct(0);
+
+    const start = Date.now();
+
+    const id = setInterval(() => {
+      const elapsed = Date.now() - start;
+
+      if (elapsed >= FAKE_DURATION_MS) {
+        setFakePct(FAKE_MAX_PCT);
+        clearInterval(id);
+      } else {
+        const ratio = elapsed / FAKE_DURATION_MS;
+        setFakePct(ratio * FAKE_MAX_PCT);
+      }
+    }, 100); // update fluido
+
+    return () => clearInterval(id);
+  }, []); // solo al mount: ogni volta che questo componente "appare" da zero
+
+  // NEW: il valore mostrato è il max tra quello finto e quello reale.
+  // Così non torni mai indietro (se il backend manda già >5%, vincono i dati reali).
+  const pctToShow = Math.max(REAL_PCT, Math.round(fakePct)); // NEW
 
   const activeMsgs = useMemo(() => {
     if (phase === "extract") return extractMsgs?.length ? extractMsgs : ["Extracting…"];
@@ -75,11 +109,11 @@ export default function Loading({
             <div className={styles.progressTrack}>
               <div
                 className={styles.progressFill}
-                style={{ width: `${pct}%` }}
+                style={{ width: `${pctToShow}%` }}  // <-- usa pctToShow
               />
             </div>
             <span className={styles.progressLabel}>
-              {inQueue ? "In queue…" : `${pct}%`}
+              {inQueue ? "In queue…" : `${pctToShow}%`}
             </span>
           </div>
 
