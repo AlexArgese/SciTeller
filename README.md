@@ -26,6 +26,12 @@ docker-compose.yml
 .env.example              # project-level env template
 ```
 
+## Document Parsing 
+The `Document_Parsing/` directory is not versioned.
+
+- If you already have a local `Document_Parsing/` folder, place it at the root of the backend repository.
+- If you do **not** have `Document_Parsing/`, the backend expects the **output of the parsing step** (standardized md files) to be already available at the configured input path.
+
 ## Prerequisites
 - Docker & Docker Compose
 - A PostgreSQL instance reachable by `auth-api`
