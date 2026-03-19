@@ -7,29 +7,29 @@ from typing import List, Dict, Any
 
 import spacy
 import torch
-import bert_score  # 👉 usiamo bert_score, NON 'evaluate'
+import bert_score 
 
 # ------------------------
-# SpaCy NER (come prima)
+# SpaCy NER 
 # ------------------------
 try:
     NER = spacy.load("en_core_web_sm")
 except OSError:
     raise RuntimeError(
-        "SpaCy model en_core_web_sm non installato. "
-        "Esegui: python -m spacy download en_core_web_sm"
+        "SpaCy model en_core_web_sm not installed. "
+        "Run: python -m spacy download en_core_web_sm"
     )
 
 # -------------------------------------------------------------
 # UTILS BASE
 # -------------------------------------------------------------
 def normalize_text(t: str) -> str:
-    """Normalizzazione semplice: lowercase + spazi compressi."""
+    """Simple normalisation: lowercase + compressed spaces."""
     return re.sub(r"\s+", " ", t.strip().lower())
 
 
 # -------------------------------------------------------------
-# TOKENIZZAZIONE "RICCA" PER RECALL / LOOP / TITOLI (stile ablation)
+# TOKENIZATION
 # -------------------------------------------------------------
 
 STOP = set("""
@@ -45,8 +45,8 @@ def tokenize_simple(text: str) -> List[str]:
 
 def jaccard_recall(story_tokens: List[str], ctx_tokens: List[str]) -> float:
     """
-    Recall lessicale: |A ∩ B| / |A|
-    dove A = token della storia, B = token del paper.
+    Lexixal recall: |A ∩ B| / |A|
+    where A = story token, B = paper token.
     """
     A = set(story_tokens)
     B = set(ctx_tokens)
@@ -55,8 +55,8 @@ def jaccard_recall(story_tokens: List[str], ctx_tokens: List[str]) -> float:
 
 def max_ngram_repeat(text: str, n: int = 3) -> float:
     """
-    Calcola la ripetizione massima di n-grammi (come in ablation).
-    Ritorna un valore in [0,1], dove 1 = n-gram più ripetuto possibile.
+    Calculate the maximum occurrence of n-grams.
+    Returns a value in the range [0,1], where 1 indicates the most frequently occurring n-gram.
     """
     toks = tokenize_simple(text)
     if len(toks) < n:
@@ -72,9 +72,9 @@ def max_ngram_repeat(text: str, n: int = 3) -> float:
 
 def _extract_title(sec: Any) -> str:
     """
-    Estrae il titolo da una sezione di outline o di storia.
-    - Se dict: usa campo 'title'.
-    - Altrimenti converte a stringa.
+    Retrieves the title from an outline or history section.
+    - If dict: uses the “title” field.
+    - Otherwise, converts to a string.
     """
     if isinstance(sec, dict):
         return str(sec.get("title") or "")
@@ -83,8 +83,8 @@ def _extract_title(sec: Any) -> str:
 
 def title_outline_similarity(outline: List[Any], sections: List[Any]) -> float:
     """
-    Title match tra outline e sezioni generate, come in ablation:
-    sim media Jaccard sulle parole dei titoli (normalizzate).
+    Title match between outlines and generated sections, as in ablation:
+    average Jaccard similarity on title words (normalised).
     """
     sims: List[float] = []
     for in_sec, out_sec in zip(outline, sections):
@@ -101,7 +101,7 @@ def title_outline_similarity(outline: List[Any], sections: List[Any]) -> float:
 
 
 # -------------------------------------------------------------
-# 3) METRICHE
+# 3) Metrics
 # -------------------------------------------------------------
 
 # ---------------------
@@ -122,15 +122,15 @@ def compute_bertscore(story_text: str, paper_text: str) -> float:
             verbose=False,
             device="cuda" if torch.cuda.is_available() else "cpu",
         )
-        # F è un tensore di shape [1]
+        # F is a tensor of rank [1]
         return float(F[0].item())
     except Exception:
-        # fallback neutro in caso di errore
+        # neutral fallback in the event of an error
         return 0.0
 
 
 # ---------------------
-# Recall lessicale (Jaccard stile ablation)
+# Lexical recall 
 # ---------------------
 def compute_lexical_recall(story_text: str, paper_text: str) -> float:
     s_tokens = tokenize_simple(story_text or "")
@@ -150,13 +150,13 @@ def compute_noloop(story_text: str) -> float:
 
 
 # ---------------------
-# No-Hallucination (NER PERSON/ORG) - identico a prima
+# No-Hallucination (NER PERSON/ORG) 
 # ---------------------
 def compute_nohallucination(sections: List[str], paper: str) -> float:
     """
-    Versione originale:
-    - Estrae entità PERSON/ORG da storia e paper.
-    - Conta quante entità della storia NON compaiono nel paper.
+    Original version:
+    - Extracts PERSON/ORG entities from the story and the paper.
+    - Counts how many entities from the story do NOT appear in the paper.
     - NoHall = 1 - (#hallucinated / #story_ents).
     """
     story = "\n".join(sections)
@@ -183,7 +183,7 @@ def compute_nohallucination(sections: List[str], paper: str) -> float:
 
 
 # -------------------------------------------------------------
-# 4) STORYSCORE (nuovi pesi)
+# 4) STORYSCORE 
 # -------------------------------------------------------------
 def compute_storyscore(
     bert: float,
@@ -193,12 +193,12 @@ def compute_storyscore(
     nohall: float,
 ) -> float:
     """
-    Pesi richiesti:
+    Weights required:
       0.40 → BERTScore
-      0.30 → Recall lessicale
-      0.10 → title match
-      0.10 → no-repetition
-      0.10 → no-hallucination
+      0.30 → Lexical recall
+      0.10 → Title match
+      0.10 → No repetition
+      0.10 → No hallucination
     """
     return (
         0.40 * bert
@@ -214,7 +214,7 @@ def compute_storyscore(
 # -------------------------------------------------------------
 def compute_story_score(payload: Dict[str, Any]) -> Dict[str, float]:
     """
-    Calcola le metriche e lo StoryScore a partire dal payload
+    Calculate the metrics and StoryScore based on the payload
     (outline, sections, persona, paper_title, paper_markdown).
     """
     outline = payload.get("outline") or []
@@ -242,19 +242,19 @@ def compute_story_score(payload: Dict[str, Any]) -> Dict[str, float]:
     paper_text_raw = paper_md_raw
     paper_text_norm = normalize_text(paper_md_raw)
 
-    # --- metriche ---
+    # --- metrics ---
     bert = compute_bertscore(story_text_raw, paper_text_raw)
     lexrec = compute_lexical_recall(story_text_raw, paper_text_raw)
 
-    # title match tra outline e sezioni (titoli)
+    # Title match between outline and sections (headings)
     title_match = title_outline_similarity(outline, sections_raw)
 
     noloop = compute_noloop(story_text_raw)
 
-    # no-hallucination come versione originale (NER PERSON/ORG)
+    # no-hallucination as the original version (NER PERSON/ORG)
     nohall = compute_nohallucination(sections_text_norm, paper_text_norm)
 
-    # storyscore finale
+    # final storyscore
     storyscore = compute_storyscore(
         bert=bert,
         lexrec=lexrec,
@@ -263,16 +263,16 @@ def compute_story_score(payload: Dict[str, Any]) -> Dict[str, float]:
         nohall=nohall,
     )
 
-    # Per retrocompatibilità teniamo anche il campo ctx_recall,
-    # qui impostato uguale al recall lessicale.
+    # For backwards compatibility, we also retain the ctx_recall field,
+    # set here to be the same as the lexical recall.
     ctx_recall = lexrec
 
     return {
         "bertscore": float(bert),
         "lexical_recall": float(lexrec),
-        "title_cov": float(title_match),   # stesso nome chiave di prima
+        "title_cov": float(title_match),  
         "noloop": float(noloop),
-        "ctx_recall": float(ctx_recall),  # per non rompere il frontend
+        "ctx_recall": float(ctx_recall),
         "nohall": float(nohall),
         "storyscore": float(storyscore),
     }
