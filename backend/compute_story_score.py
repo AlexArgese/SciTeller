@@ -3,14 +3,16 @@ import sys
 import json
 import re
 import unicodedata
+from collections import Counter
 from typing import List, Dict, Any
 
 import spacy
 import torch
-import bert_score 
+import bert_score
+
 
 # ------------------------
-# SpaCy NER 
+# SpaCy NER
 # ------------------------
 try:
     NER = spacy.load("en_core_web_sm")
@@ -20,17 +22,14 @@ except OSError:
         "Run: python -m spacy download en_core_web_sm"
     )
 
+
 # -------------------------------------------------------------
 # UTILS BASE
 # -------------------------------------------------------------
 def normalize_text(t: str) -> str:
-    """Simple normalisation: lowercase + compressed spaces."""
-    return re.sub(r"\s+", " ", t.strip().lower())
+    """Simple normalization: lowercase + compressed spaces."""
+    return re.sub(r"\s+", " ", str(t or "").strip().lower())
 
-
-# -------------------------------------------------------------
-# TOKENIZATION
-# -------------------------------------------------------------
 
 STOP = set("""
 a an the and or of in to for with by on at from as that this these those it its their our your his her we you i he she they them is are was were be been being have has had do does did can could should would will may might must not no yes into about over under without within across per among between more most less least each other such than up down out if then else when while because during before after above below same different also however therefore
@@ -38,83 +37,183 @@ a an the and or of in to for with by on at from as that this these those it its 
 
 
 def tokenize_simple(text: str) -> List[str]:
-    text = unicodedata.normalize("NFKC", text.lower())
+    text = unicodedata.normalize("NFKC", str(text or "").lower())
     text = re.sub(r"[^a-z0-9\s]", " ", text)
     return [t for t in text.split() if t and t not in STOP]
 
 
-def jaccard_recall(story_tokens: List[str], ctx_tokens: List[str]) -> float:
+# -------------------------------------------------------------
+# CONTEXT RECALL
+# -------------------------------------------------------------
+def paper_centered_recall(story_tokens: List[str], paper_tokens: List[str]) -> float:
     """
-    Lexixal recall: |A ∩ B| / |A|
-    where A = story token, B = paper token.
+    ContextRecall = |N_story ∩ N_paper| / |N_paper|
+    Paper-centered coverage.
     """
-    A = set(story_tokens)
-    B = set(ctx_tokens)
-    return (len(A & B) / len(A)) if A else 0.0
+    story_set = set(story_tokens)
+    paper_set = set(paper_tokens)
+    return (len(story_set & paper_set) / len(paper_set)) if paper_set else 0.0
 
 
-def max_ngram_repeat(text: str, n: int = 3) -> float:
+def compute_context_recall(story_text: str, paper_text: str) -> float:
+    s_tokens = tokenize_simple(story_text or "")
+    p_tokens = tokenize_simple(paper_text or "")
+    return paper_centered_recall(s_tokens, p_tokens)
+
+
+# -------------------------------------------------------------
+# NO REDUNDANCY
+# -------------------------------------------------------------
+def redundancy_rate(text: str, n: int = 3) -> float:
     """
-    Calculate the maximum occurrence of n-grams.
-    Returns a value in the range [0,1], where 1 indicates the most frequently occurring n-gram.
+    RedundancyRate = max_g freq(g) / |G_n|
     """
     toks = tokenize_simple(text)
     if len(toks) < n:
         return 0.0
-    grams = [" ".join(toks[i : i + n]) for i in range(len(toks) - n + 1)]
+
+    grams = [tuple(toks[i : i + n]) for i in range(len(toks) - n + 1)]
     if not grams:
         return 0.0
-    from collections import Counter
 
-    m = Counter(grams).most_common(1)[0][1]
-    return min(1.0, m / max(1, len(grams) // 10))
+    max_freq = Counter(grams).most_common(1)[0][1]
+    return float(max_freq / len(grams))
 
 
+def compute_noredundancy(story_text: str, n: int = 3) -> float:
+    rep = redundancy_rate(story_text or "", n=n)
+    return float(max(0.0, min(1.0, 1.0 - rep)))
+
+
+# -------------------------------------------------------------
+# TITLE COVERAGE
+# -------------------------------------------------------------
 def _extract_title(sec: Any) -> str:
-    """
-    Retrieves the title from an outline or history section.
-    - If dict: uses the “title” field.
-    - Otherwise, converts to a string.
-    """
     if isinstance(sec, dict):
         return str(sec.get("title") or "")
     return str(sec or "")
 
 
-def title_outline_similarity(outline: List[Any], sections: List[Any]) -> float:
+def _normalize_title_for_match(title: str) -> str:
     """
-    Title match between outlines and generated sections, as in ablation:
-    average Jaccard similarity on title words (normalised).
+    Normalize title by removing differences in case, punctuation, and spacing.
     """
-    sims: List[float] = []
+    s = unicodedata.normalize("NFKC", str(title or "").lower())
+    s = re.sub(r"[^\w\s]", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def compute_title_coverage(outline: List[Any], sections: List[Any]) -> float:
+    """
+    TitleCoverage = 1 if all normalized generated titles exactly match
+    the normalized outline titles, 0 otherwise.
+    """
+    if not outline and not sections:
+        return 1.0
+
+    if len(outline) != len(sections):
+        return 0.0
+
     for in_sec, out_sec in zip(outline, sections):
-        t_in = set(tokenize_simple(_extract_title(in_sec)))
-        t_out = set(tokenize_simple(_extract_title(out_sec)))
-        if not t_in and not t_out:
-            sims.append(1.0)
-            continue
-        if not t_in or not t_out:
-            sims.append(0.0)
-            continue
-        sims.append(len(t_in & t_out) / len(t_in | t_out))
-    return sum(sims) / len(sims) if sims else 0.0
+        t_in = _normalize_title_for_match(_extract_title(in_sec))
+        t_out = _normalize_title_for_match(_extract_title(out_sec))
+        if t_in != t_out:
+            return 0.0
+
+    return 1.0
 
 
 # -------------------------------------------------------------
-# 3) Metrics
+# PROMPT CLEANLINESS
 # -------------------------------------------------------------
+def _split_sentences_light(text: str) -> List[str]:
+    parts = re.split(r"(?<=[.!?])\s+|\n+", str(text or ""))
+    return [p.strip() for p in parts if p and p.strip()]
 
-# ---------------------
-# BERTScore (roberta-large via bert_score)
-# ---------------------
+
+def _compute_prompt_contamination_stats(text: str) -> Dict[str, float]:
+    """
+    Structural contamination detector for PromptCleanliness.
+
+    T = (1.0*Vline + 0.75*Vsent + 1.25*Vjson + 0.75*Vfence + 2.5*Vblock) / |U|
+    where U is the number of non-empty lines.
+    """
+    raw = str(text or "")
+    nonempty_lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
+    U = max(1, len(nonempty_lines))
+
+    line_marker_re = re.compile(
+        r"(?i)^\s*(?:human|assistant|user|system|rules?|instruction|instructions|task|prompt)\s*:"
+    )
+    json_line_re = re.compile(r'^\s*(?:\{.*\}|\[.*\])\s*$')
+    fence_re = re.compile(r"(?m)^\s*(?:```|~~~)")
+
+    imperative_res = [
+        re.compile(
+            r"(?i)^(?:please\s+)?(?:do not|don't|never|avoid|must(?:\s+not)?|should(?:\s+not)?|return|output|respond|write|provide|include|use|follow|answer|explain|rewrite|summarize)\b"
+        ),
+        re.compile(r"(?i)^(?:be sure to|make sure to)\b"),
+    ]
+    dense_constraint_re = re.compile(r"(?i)\b(?:do not|don't|never|must not|should not|avoid)\b")
+
+    vline = sum(1 for ln in nonempty_lines if line_marker_re.search(ln))
+    vjson = sum(1 for ln in nonempty_lines if json_line_re.search(ln))
+    vfence = len(fence_re.findall(raw))
+
+    sentences = _split_sentences_light(raw)
+    vsent = 0
+    for sent in sentences:
+        if any(rx.search(sent) for rx in imperative_res):
+            vsent += 1
+
+    blocks = [b.strip() for b in re.split(r"\n\s*\n", raw) if b.strip()]
+    if not blocks:
+        blocks = sentences
+
+    vblock = 0
+    for block in blocks:
+        if len(dense_constraint_re.findall(block)) >= 3:
+            vblock += 1
+
+    T = (
+        1.0 * vline
+        + 0.75 * vsent
+        + 1.25 * vjson
+        + 0.75 * vfence
+        + 2.5 * vblock
+    ) / U
+
+    T = float(max(0.0, min(1.0, T)))
+
+    return {
+        "T": T,
+        "vline": float(vline),
+        "vsent": float(vsent),
+        "vjson": float(vjson),
+        "vfence": float(vfence),
+        "vblock": float(vblock),
+        "nonempty_lines": float(U),
+    }
+
+
+def compute_prompt_cleanliness(story_text: str) -> float:
+    stats = _compute_prompt_contamination_stats(story_text or "")
+    return float(max(0.0, min(1.0, 1.0 - stats["T"])))
+
+
+# -------------------------------------------------------------
+# BERTScore
+# -------------------------------------------------------------
 def compute_bertscore(story_text: str, paper_text: str) -> float:
     story_text = (story_text or "").strip()
     paper_text = (paper_text or "").strip()
+
     if not story_text or not paper_text:
         return 0.0
 
     try:
-        P, R, F = bert_score.score(
+        _, _, F = bert_score.score(
             [story_text],
             [paper_text],
             model_type="roberta-large",
@@ -122,44 +221,22 @@ def compute_bertscore(story_text: str, paper_text: str) -> float:
             verbose=False,
             device="cuda" if torch.cuda.is_available() else "cpu",
         )
-        # F is a tensor of rank [1]
         return float(F[0].item())
     except Exception:
-        # neutral fallback in the event of an error
         return 0.0
 
 
-# ---------------------
-# Lexical recall 
-# ---------------------
-def compute_lexical_recall(story_text: str, paper_text: str) -> float:
-    s_tokens = tokenize_simple(story_text or "")
-    c_tokens = tokenize_simple(paper_text or "")
-    return jaccard_recall(s_tokens, c_tokens)
-
-
-# ---------------------
-# No-loop (no-repetition trigram)
-# ---------------------
-def compute_noloop(story_text: str) -> float:
+# -------------------------------------------------------------
+# NO HALLUCINATION
+# -------------------------------------------------------------
+def compute_nohallucination(story_text: str, paper_text: str) -> float:
     """
-    NoRepetition = 1 - max_ngram_repeat(3-grammi)
+    Extract PERSON/ORG entities from story and paper.
+    NoHall = 1 - (#hallucinated / #story_ents)
     """
-    rep = max_ngram_repeat(story_text or "", n=3)
-    return float(max(0.0, min(1.0, 1.0 - rep)))
+    story = str(story_text or "")
+    paper = str(paper_text or "")
 
-
-# ---------------------
-# No-Hallucination (NER PERSON/ORG) 
-# ---------------------
-def compute_nohallucination(sections: List[str], paper: str) -> float:
-    """
-    Original version:
-    - Extracts PERSON/ORG entities from the story and the paper.
-    - Counts how many entities from the story do NOT appear in the paper.
-    - NoHall = 1 - (#hallucinated / #story_ents).
-    """
-    story = "\n".join(sections)
     doc_story = NER(story)
     doc_paper = NER(paper)
 
@@ -183,103 +260,111 @@ def compute_nohallucination(sections: List[str], paper: str) -> float:
 
 
 # -------------------------------------------------------------
-# 4) STORYSCORE 
+# STORYSCORE
 # -------------------------------------------------------------
 def compute_storyscore(
+    ctx_recall: float,
     bert: float,
-    lexrec: float,
-    title_match: float,
-    noloop: float,
+    prompt_cleanliness: float,
+    title_cov: float,
+    nored: float,
     nohall: float,
 ) -> float:
     """
-    Weights required:
-      0.40 → BERTScore
-      0.30 → Lexical recall
-      0.10 → Title match
-      0.10 → No repetition
-      0.10 → No hallucination
+    StoryScore =
+        0.30 * ContextRecall
+      + 0.20 * BERTScore
+      + 0.20 * PromptCleanliness
+      + 0.10 * TitleCoverage
+      + 0.10 * NoRedundancy
+      + 0.10 * NoHallucination
     """
     return (
-        0.40 * bert
-        + 0.30 * lexrec
-        + 0.10 * title_match
-        + 0.10 * noloop
+        0.30 * ctx_recall
+        + 0.20 * bert
+        + 0.20 * prompt_cleanliness
+        + 0.10 * title_cov
+        + 0.10 * nored
         + 0.10 * nohall
     )
 
 
 # -------------------------------------------------------------
-# 5) MAIN ENTRYPOINT
+# MAIN ENTRYPOINT
 # -------------------------------------------------------------
 def compute_story_score(payload: Dict[str, Any]) -> Dict[str, float]:
     """
-    Calculate the metrics and StoryScore based on the payload
-    (outline, sections, persona, paper_title, paper_markdown).
+    Calculate metrics and StoryScore based on the payload:
+    {
+      "outline": ...,
+      "sections": ...,
+      "persona": ...,
+      "paper_title": ...,
+      "paper_markdown": ...
+    }
     """
     outline = payload.get("outline") or []
     sections_raw = payload.get("sections") or []
-    persona = payload.get("persona", "")
-    paper_title = payload.get("paper_title", "")
     paper_md_raw = payload.get("paper_markdown", "") or ""
 
-    # --- testo delle sezioni ---
+    # --- collect section texts ---
     sections_text_raw: List[str] = []
-    sections_text_norm: List[str] = []
 
     for s in sections_raw:
         if isinstance(s, dict):
             t = s.get("narrative") or s.get("text") or ""
         else:
             t = str(s or "")
-        t_raw = t
-        t_norm = normalize_text(t)
-        if t_norm.strip():
-            sections_text_raw.append(t_raw)
-            sections_text_norm.append(t_norm)
+
+        if normalize_text(t).strip():
+            sections_text_raw.append(str(t))
 
     story_text_raw = "\n".join(sections_text_raw)
-    paper_text_raw = paper_md_raw
-    paper_text_norm = normalize_text(paper_md_raw)
+    paper_text_raw = str(paper_md_raw)
 
     # --- metrics ---
+    ctx_recall = compute_context_recall(story_text_raw, paper_text_raw)
     bert = compute_bertscore(story_text_raw, paper_text_raw)
-    lexrec = compute_lexical_recall(story_text_raw, paper_text_raw)
 
-    # Title match between outline and sections (headings)
-    title_match = title_outline_similarity(outline, sections_raw)
+    prompt_stats = _compute_prompt_contamination_stats(story_text_raw)
+    prompt_cleanliness = compute_prompt_cleanliness(story_text_raw)
 
-    noloop = compute_noloop(story_text_raw)
+    title_cov = compute_title_coverage(outline, sections_raw)
+    nored = compute_noredundancy(story_text_raw, n=3)
+    nohall = compute_nohallucination(story_text_raw, paper_text_raw)
 
-    # no-hallucination as the original version (NER PERSON/ORG)
-    nohall = compute_nohallucination(sections_text_norm, paper_text_norm)
-
-    # final storyscore
     storyscore = compute_storyscore(
+        ctx_recall=ctx_recall,
         bert=bert,
-        lexrec=lexrec,
-        title_match=title_match,
-        noloop=noloop,
+        prompt_cleanliness=prompt_cleanliness,
+        title_cov=title_cov,
+        nored=nored,
         nohall=nohall,
     )
 
-    # For backwards compatibility, we also retain the ctx_recall field,
-    # set here to be the same as the lexical recall.
-    ctx_recall = lexrec
-
     return {
+        "context_recall": float(ctx_recall),
+        "ctx_recall": float(ctx_recall),              # backward compatibility
+        "lexical_recall": float(ctx_recall),          # backward compatibility
+
         "bertscore": float(bert),
-        "lexical_recall": float(lexrec),
-        "title_cov": float(title_match),  
-        "noloop": float(noloop),
-        "ctx_recall": float(ctx_recall),
+
+        "prompt_cleanliness": float(prompt_cleanliness),
+        "prompt_contamination": float(prompt_stats["T"]),
+
+        "title_coverage": float(title_cov),
+        "title_cov": float(title_cov),                # backward compatibility
+
+        "nored": float(nored),
+        "noloop": float(nored),                       # backward compatibility
+
         "nohall": float(nohall),
         "storyscore": float(storyscore),
     }
 
 
 # -------------------------------------------------------------
-# 6) CLI USAGE
+# CLI USAGE
 # -------------------------------------------------------------
 if __name__ == "__main__":
     try:
